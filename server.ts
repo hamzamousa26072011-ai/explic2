@@ -1671,7 +1671,7 @@ app.post('/api/scholar/chat', async (req, res) => {
                 model: modelName,
                 contents: { parts: chatParts },
                 config: {
-                  systemInstruction: `${PRINCIPAL_EXAMINER_SYSTEM_PROMPT}\nTake your time to think step-by-step and respond with maximum accuracy, structured mark-scheme bullet points, exact examiner phrasing, and common pitfalls.\nCRITICAL HIGHLIGHTING RULE: Always highlight EVERY key point, core definition, formula, and marking keyword in bold (e.g. **energy converted per unit charge**, **driving charge around complete circuit**, **formula: E = W / Q**). Break down answers with a clear '### Key Points & Mark Scheme Definition' section and highlight all essential keywords in **bold** so they stand out with the examiner highlighter pen style for the student.`,
+                  systemInstruction: `${PRINCIPAL_EXAMINER_SYSTEM_PROMPT}\nTake your time to think step-by-step and respond with maximum accuracy, structured mark-scheme bullet points, exact examiner phrasing, and common pitfalls. Structure definitions and explanations cleanly using sections like:\n### The Standard Definition\n### Examiner's Breakdown (Marking Criteria)\n### Common Pitfalls & Examiner Notes`,
                   temperature: 0.1,
                 },
               }),

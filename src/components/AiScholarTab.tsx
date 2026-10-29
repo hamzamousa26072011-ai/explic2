@@ -2013,6 +2013,11 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               <div className="space-y-6">
                 {activeSession.messages.map((msg) => {
                   const isUser = msg.role === 'user';
+                  const cleanParagraphs = String(msg.text || '')
+                    .replace(/\*\*([^*]+)\*\*/g, '$1')
+                    .split('\n')
+                    .map((l) => l.trim())
+                    .filter(Boolean);
 
                   return (
                     <div key={msg.id} className="space-y-3.5">
@@ -2039,7 +2044,12 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                               >
                                 <ShieldCheck className="w-3.5 h-3.5" />
                               </span>
-                              <span className="text-[11px] font-bold tracking-wider uppercase">
+                              <span
+                                style={{
+                                  color: isLight ? '#0F172A' : '#F8FAFC',
+                                }}
+                                className="text-[11px] font-bold tracking-wider uppercase"
+                              >
                                 Principal Examiner &amp; Senior Moderator
                               </span>
                             </div>
@@ -2057,23 +2067,66 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                           </div>
                         )}
 
-                        {isUser ? (
-                          <div className="space-y-2 text-xs sm:text-[13px] leading-relaxed text-white">
-                            {String(msg.text || '')
-                              .split('\n')
-                              .filter(Boolean)
-                              .map((line, lIdx) => (
-                                <p key={lIdx}>{line}</p>
-                              ))}
-                          </div>
-                        ) : (
-                          <div
-                            className="markdown-body text-xs sm:text-[13px] leading-relaxed space-y-2.5 text-slate-800 dark:text-slate-100"
-                            dangerouslySetInnerHTML={{
-                              __html: renderExaminerAnswerWithKeyPoints(msg.text),
-                            }}
-                          />
-                        )}
+                        <div
+                          style={{
+                            color: isUser
+                              ? '#FFFFFF'
+                              : isLight
+                              ? '#0F172A'
+                              : '#F8FAFC',
+                          }}
+                          className="space-y-2 text-xs sm:text-[13px] leading-relaxed"
+                        >
+                          {cleanParagraphs.map((line, lIdx) => {
+                            const isHeading =
+                              line.startsWith('#') ||
+                              /^(?:Pass \d|Output [A-D]|Summary|Key Points|Lost Marks|Model Answer|The Standard Definition|Examiner’s Breakdown|Examiner's Breakdown|Common Pitfalls)/i.test(
+                                line
+                              );
+                            const isBullet =
+                              line.startsWith('- ') ||
+                              line.startsWith('• ') ||
+                              /^\d+\.\s/.test(line);
+                            const cleanedLine = line.replace(/^#+\s*/, '');
+
+                            if (isHeading) {
+                              return (
+                                <div
+                                  key={lIdx}
+                                  style={{
+                                    color: isUser
+                                      ? '#FFFFFF'
+                                      : isLight
+                                      ? '#0F172A'
+                                      : '#F8FAFC',
+                                  }}
+                                  className="font-bold text-xs sm:text-sm pt-1 first:pt-0 tracking-tight"
+                                >
+                                  {cleanedLine}
+                                </div>
+                              );
+                            }
+                            if (isBullet) {
+                              return (
+                                <div
+                                  key={lIdx}
+                                  className="flex items-start gap-2 pl-1"
+                                >
+                                  <span className="text-indigo-500 font-bold mt-0.5">
+                                    •
+                                  </span>
+                                  <span>
+                                    {cleanedLine.replace(
+                                      /^(?:[-•]|\d+\.)\s*/,
+                                      ''
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            return <p key={lIdx}>{cleanedLine}</p>;
+                          })}
+                        </div>
                       </div>
 
                       {/* If message includes a 3-Pass Examiner Evaluation, render the structured 4-Output Studio */}
