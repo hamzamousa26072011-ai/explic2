@@ -1,6 +1,9 @@
 import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
+import multer from 'multer';
+import cors from 'cors';
+import OpenAI from 'openai';
 import { GoogleGenAI, Type } from '@google/genai';
 import { generateAnnotatedExaminerPdfBytes } from './src/utils/examinerPdfAnnotator.ts';
 
@@ -516,14 +519,120 @@ function buildVoiceDailyPlanFromText(
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit per file
+});
+
+app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
+app.use(express.static('public'));
 
 // In-memory server backup stores for resilience
 const workspaceMemoryStore = new Map<string, { payload: unknown; updatedAt: string }>();
 const securityThreatLogs: SecurityThreatIncident[] = [];
 
-const PRINCIPAL_EXAMINER_SYSTEM_PROMPT = `You are an expert Principal Examiner, Senior Moderator, and Assessment Specialist covering Cambridge CAIE, Pearson Edexcel, and Oxford AQA across IGCSE, GCSE, and O-Level subjects.
+// Exact 100% verbatim Principal Examiner System Prompt
+export const EXAMINER_SYSTEM_PROMPT = `# ROLE & AUTHORITY
+You are an elite Principal Examiner, Senior Assessment Moderator, and Forensic OCR & Handwriting Transcription Specialist for Cambridge Assessment International Education (CAIE — IGCSE / O-Level / International AS & A-Level), Pearson Edexcel (International GCSE / IAL), and OxfordAQA.
+
+Your mandate is to process an uploaded Past Paper / Student Script (containing printed questions, handwritten or digital student answers, working, and margin annotations) alongside its Official Mark Scheme with **100% verbatim fidelity and zero omissions**. Take all the time required to inspect every page, every sub-question, every annotation, and every marking point.
+
+---
+
+# STAGE 1 — ZERO-OMISSION FORENSIC OCR & ANNOTATION TRANSCRIPTION
+Go through the Past Paper / Student Script **page by page, from Page 1 to the final page**.
+**CRITICAL RULE: DO NOT LEAVE ANYTHING OUT. DO NOT SUMMARIZE, PARAPHRASE, OR SKIP ANY SUB-QUESTION OR ANNOTATION.**
+
+For every page and every question/sub-question (e.g., \`1(a)\`, \`1(b)(i)\`, \`1(b)(ii)\`, \`2(a)\`, etc.):
+1. **Question Identification**:
+   - Extract the exact Page Number, Question Number, Sub-Question, Printed Question Prompt, Command Word (e.g., *State, Explain, Calculate, Suggest, Evaluate*), and Maximum Available Marks \`[N]\`.
+2. **Verbatim Student Writing Transcription**:
+   - Transcribe **100% of what the student wrote** word-for-word and symbol-for-symbol, preserving exact spelling, grammar, punctuation, mathematical equations, numerical substitutions, units, significant figures, chemical formulas, state symbols \`(s), (l), (g), (aq)\`, table entries, and circled multiple-choice options.
+3. **Complete Paper Annotations & Visual Markings Extraction**:
+   - Extract **every annotation written anywhere on the paper**, including:
+     - Margin notes, side calculations, and rough working
+     - Underlined, highlighted, or circled keywords/numbers in the question stem
+     - Arrows, diagrams, free-body force vectors, ray paths, circuit symbols, and graph plottings/tangent readings
+     - Crossed-out or amended work (transcribe as \`[Crossed out: ...] -> [Amended to: ...]\`)
+     - Any existing ticks, crosses, or self-corrections written on the script.
+
+Format Stage 1 output clearly as:
+> **[Page X | Question N(sub) — Max Marks: M]**
+> - **Printed Question**: ...
+> - **Student Writing (Verbatim OCR)**: ...
+> - **Margin / Diagram / Working Annotations**: ...
+
+---
+
+# STAGE 2 — EXHAUSTIVE OFFICIAL MARK SCHEME EXTRACTION
+Go through the Official Mark Scheme **page by page, from Question 1 to the final question**.
+**CRITICAL RULE: DO NOT MISS ANY DETAIL. DO NOT OMIT ANY SUB-QUESTION, MARKING CODE, OR EXAMINER GUIDANCE NOTE.**
+
+For every question and sub-question:
+1. **Mark Allocation & Codes**:
+   - Extract the exact maximum marks and every individual marking point code:
+     - **M marks** (Method marks — awarded for correct method/substitution even if final numerical value is inaccurate)
+     - **A marks** (Accuracy marks — dependent on preceding M mark unless stated otherwise)
+     - **B marks** (Independent marks — awarded standalone regardless of method)
+     - **C marks** (Compensation marks) or **Level / Band Descriptors** (Content & Communication vs. Language / Quality of Extended Response).
+2. **Exact Examiner Rubric & Guidance**:
+   - Extract **all** examiner notes verbatim:
+     - Mandatory underlined/bold keywords or required technical phrases
+     - Acceptable alternatives (\`Accept...\`, \`Allow...\`, \`owtte\` — *or words to that effect*, numerical tolerance ranges)
+     - Disallowed or penalized responses (\`Reject...\`, \`Do not accept...\`, \`Ignore...\`)
+     - Error Carried Forward (\`ECF\`) rules, unit requirements, and significant figure rules.
+
+---
+
+# STAGE 3 — 3-PASS INDEPENDENT MARKING & MODERATION PROTOCOL
+Evaluate the student's transcribed script from Stage 1 strictly against the extracted Mark Scheme from Stage 2 using three sequential passes:
+
+- **Pass 1 (Strict Point-by-Point Marking)**:
+  Match each clause, equation, or step in the student's transcribed response to the exact Mark Scheme points (\`M1\`, \`A1\`, \`B1\`, or Band descriptors). Never award marks by assumption or "benefit of the doubt" where a mandatory keyword, state symbol, or unit is missing.
+- **Pass 2 (Technical & Consequential Verification)**:
+  Verify Error Carried Forward (\`ECF\`) across linked sub-questions so a student is never double-penalized for an earlier calculation error if their subsequent method is correct. Verify significant figures, rounding, SI units, and word-count discipline.
+- **Pass 3 (Senior Moderator Lock)**:
+  Reconcile Pass 1 and Pass 2 against official board marking conventions (\`Accept\` / \`Reject\` / \`Ignore\` rules) and lock the final score for every sub-question.
+
+---
+
+# STAGE 4 — REQUIRED 4-DELIVERABLE OUTPUT STRUCTURE
+
+## Deliverable 1: Executive Summary & Breakdown Table
+- **Header Banner**: Examination Board, Qualification, Subject, Paper Code/Component, Total Marks Awarded (\`X / Y\`), Percentage (\`Z%\`), and Provisional Grade (\`A* / A / B / C / 9–1\`).
+- **Question-by-Question Breakdown Table**:
+  Columns: \`Question\` | \`Topic / Task\` | \`Student Key Evidence\` | \`Mark Scheme Breakdown\` | \`Score (Awarded / Max)\`.
+- **Examiner's Overview**: High-level synthesis of script performance, precision, and technique.
+
+## Deliverable 2: Line-by-Line Annotated Script & Deep-Dive Corrections (Every Question)
+For **every single question and sub-question** on the paper:
+1. **Question Header**: \`Question N(sub) · [Topic] · [Awarded / Max Marks]\` + exact Mark Scheme basis.
+2. **Line-by-Line Annotated Student Script**:
+   Split the student's verbatim OCR transcription line-by-line or step-by-step:
+   - Prefix/mark lines that satisfy a Mark Scheme point or demonstrate accurate working with \`[GREEN HIGHLIGHT | ✓]\`
+   - Prefix/mark lines containing a factual, mathematical, unit, lexical, or grammatical error/omission with \`[RED HIGHLIGHT | ✗]\`
+3. **What Earned You Ticks (\`✓\`)**:
+   - Bullet list quoting the student's exact words/working and citing the specific Mark Scheme point (\`M1\`, \`A1\`, \`B1\`, or Band criteria) earned.
+4. **Corrections Marked with a Red Cross (\`✗\`) & Why Marks Were Lost**:
+   For every error or missed mark, provide a structured 4-part correction block:
+   - **\`✗\` Quoted Student Error / Omission**: \`"Exact quote from the student's OCR transcript"\`
+   - **Why It Lost Marks (Mark Scheme Reference)**: Explicit explanation citing the exact Mark Scheme requirement, \`Reject\` rule, or missing keyword.
+   - **\`»\` Direct Model Correction**: The exact corrected sentence, equation, or step that secures the mark.
+   - **Full-Mark Examiner Tip / Higher-Range Phrasing**: How to write or structure the response to guarantee full marks under exam conditions.
+5. **Examiner Comment on Question N**: Concise moderator takeaway for that question.
+
+## Deliverable 3: Whole-Script Diagnostic & Action Plan
+- **Strengths to Protect (\`✓\`)**: 3–5 specific strengths demonstrated across the paper.
+- **Where Marks Went (\`✗\`)**: Categorized analysis of every mark lost across the paper (e.g., missing keywords, unit/sig-fig slips, incomplete working, misread command words).
+- **Next Four Concrete Exam Targets**: 4 high-impact, actionable fixes for the student's next paper.
+- **Projected Score with Fixes Applied**: Exact calculation of what this script would score once those fixes are applied.
+
+## Deliverable 4: Concise Parent / Student Summary (WhatsApp Format)
+- Clean, scannable summary with Final Score, Percentage, Provisional Grade, Top Strengths, Main Areas for Improvement, and Priority Revision Topics.`;
+
+const PRINCIPAL_EXAMINER_SYSTEM_PROMPT = EXAMINER_SYSTEM_PROMPT + `\n\nYou are an expert Principal Examiner, Senior Moderator, and Assessment Specialist covering Cambridge CAIE, Pearson Edexcel, and Oxford AQA across IGCSE, GCSE, and O-Level subjects.
 Your task is to evaluate a student's completed examination paper against the supplied Question Paper (QP) and Mark Scheme (MS), apply board-specific marking rules, and produce a professionally annotated PDF with precise, organized examiner feedback.
 Core priorities: marking accuracy, defensible mark allocation, precise PDF alignment, readable typography, consistent visual hierarchy, zero annotation clutter, and using strictly organized ticks and crosses for markings.
 
@@ -868,6 +977,173 @@ function buildFallbackExaminerLedger(params: {
   };
 }
 
+// Helper to convert uploaded files (PDF or Image) into OpenAI content blocks
+function fileToOpenAIBlock(file: Express.Multer.File): any {
+  const base64Data = file.buffer.toString('base64');
+  if (file.mimetype === 'application/pdf') {
+    return {
+      type: 'file',
+      file: {
+        filename: file.originalname,
+        file_data: `data:application/pdf;base64,${base64Data}`,
+      },
+    };
+  } else {
+    return {
+      type: 'image_url',
+      image_url: {
+        url: `data:${file.mimetype};base64,${base64Data}`,
+        detail: 'high',
+      },
+    };
+  }
+}
+
+function fileToGeminiPart(file: Express.Multer.File): any {
+  const base64Data = file.buffer.toString('base64');
+  return {
+    inlineData: {
+      mimeType: file.mimetype || 'application/pdf',
+      data: base64Data,
+    },
+  };
+}
+
+// 0. Dedicated Forensic OCR & 3-Pass Moderation Streaming Endpoint (/api/evaluate-script)
+app.post(
+  '/api/evaluate-script',
+  upload.fields([
+    { name: 'studentScript', maxCount: 20 },
+    { name: 'markScheme', maxCount: 20 },
+  ]),
+  async (req, res) => {
+    try {
+      // Verify custom key_ps5gnQ9rlp4xSCl6 header or body field
+      const clientKey = req.headers['x-site-key'] || req.body?.siteKey;
+      const expectedKey = process.env.SITE_ACCESS_KEY || 'key_ps5gnQ9rlp4xSCl6';
+      if (clientKey && clientKey !== expectedKey) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid Site Key.' });
+      }
+
+      const filesMap = (req.files as Record<string, Express.Multer.File[]>) || {};
+      const scriptFiles = filesMap['studentScript'] || [];
+      const schemeFiles = filesMap['markScheme'] || [];
+
+      if (scriptFiles.length === 0 || schemeFiles.length === 0) {
+        return res.status(400).json({
+          error: 'Please upload both the Student Script and the Official Mark Scheme.',
+        });
+      }
+
+      // Stream response back to the browser using SSE so long papers don't time out
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const openAiKey = (process.env.OPENAI_API_KEY || '').trim();
+      const hasValidOpenAiKey =
+        openAiKey.startsWith('sk-') &&
+        !openAiKey.includes('REPLACE_WITH_YOUR_FULL_UNMASKED_KEY');
+
+      let streamedSuccessfully = false;
+
+      if (hasValidOpenAiKey) {
+        try {
+          const openai = new OpenAI({ apiKey: openAiKey });
+          const userContent = [
+            {
+              type: 'text',
+              text: 'Below are the uploaded files for the **Past Paper / Student Script**, followed by the **Official Mark Scheme**. Execute Stages 1, 2, 3, and 4 with 100% verbatim fidelity and zero omissions.',
+            },
+            { type: 'text', text: '--- START OF STUDENT SCRIPT FILES ---' },
+            ...scriptFiles.map(fileToOpenAIBlock),
+            { type: 'text', text: '--- START OF OFFICIAL MARK SCHEME FILES ---' },
+            ...schemeFiles.map(fileToOpenAIBlock),
+          ];
+
+          const stream = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            temperature: 0.1,
+            max_tokens: 16384,
+            stream: true,
+            messages: [
+              { role: 'system', content: EXAMINER_SYSTEM_PROMPT },
+              { role: 'user', content: userContent as any },
+            ],
+          });
+
+          for await (const chunk of stream) {
+            const text = chunk.choices[0]?.delta?.content || '';
+            if (text) {
+              res.write(`data: ${JSON.stringify({ text })}\n\n`);
+            }
+          }
+          streamedSuccessfully = true;
+        } catch (openAiErr) {
+          console.warn(
+            'OpenAI stream error, falling back to Gemini Examiner:',
+            openAiErr
+          );
+        }
+      }
+
+      if (!streamedSuccessfully) {
+        const ai = getGeminiClient();
+        if (!ai) {
+          throw new Error(
+            'Neither GEMINI_API_KEY nor OPENAI_API_KEY is configured on the server.'
+          );
+        }
+
+        const geminiParts: any[] = [
+          {
+            text: 'Below are the uploaded files for the **Past Paper / Student Script**, followed by the **Official Mark Scheme**. Execute Stages 1, 2, 3, and 4 with 100% verbatim fidelity and zero omissions. Go through every page and every sub-question without leaving anything out.',
+          },
+          { text: '--- START OF STUDENT SCRIPT FILES ---' },
+          ...scriptFiles.flatMap((f) => [
+            { text: `[Student Script File: ${f.originalname}]` },
+            fileToGeminiPart(f),
+          ]),
+          { text: '--- START OF OFFICIAL MARK SCHEME FILES ---' },
+          ...schemeFiles.flatMap((f) => [
+            { text: `[Official Mark Scheme File: ${f.originalname}]` },
+            fileToGeminiPart(f),
+          ]),
+        ];
+
+        const responseStream = await ai.models.generateContentStream({
+          model: 'gemini-3.1-flash-lite',
+          contents: { parts: geminiParts },
+          config: {
+            systemInstruction: EXAMINER_SYSTEM_PROMPT,
+            temperature: 0.1,
+            maxOutputTokens: 65536,
+          },
+        });
+
+        for await (const chunk of responseStream) {
+          const text = chunk.text || '';
+          if (text) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+        }
+      }
+
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (error: any) {
+      console.error('Examiner API Error:', error);
+      const errMessage = error?.message || 'Examination failed.';
+      if (!res.headersSent) {
+        res.status(500).json({ error: errMessage });
+      } else {
+        res.write(`data: ${JSON.stringify({ error: errMessage })}\n\n`);
+        res.end();
+      }
+    }
+  }
+);
+
 // 1. Unified AI Scholar & Examiner Endpoint
 app.post('/api/scholar/chat', async (req, res) => {
   try {
@@ -986,20 +1262,24 @@ app.post('/api/scholar/chat', async (req, res) => {
     const extractedQuestionDocs: string[] = [];
     let studentPdfBytesForOverlay: Uint8Array | null = null;
 
+    const scriptMultimodalParts: any[] = [];
+    const markSchemeMultimodalParts: any[] = [];
+
     if (imageBase64 && normalizedFiles.length === 0) {
       const mimeMatch = String(imageBase64).match(/^data:([^;]+);base64,/);
       const cleanMime = (mimeMatch ? mimeMatch[1] : imageMimeType || 'image/png')
         .split(';')[0]
         .trim();
-      geminiParts.push({
-        text: `=== ATTACHED STUDENT HANDWRITING / SCRIPT IMAGE FOR OCR ===\nPerform thorough Visual & Handwriting OCR on this image and transcribe every equation, calculation, diagram label, and written response verbatim:`,
-      });
-      geminiParts.push({
+      const imgPart = {
         inlineData: {
           mimeType: cleanMime || 'image/png',
           data: String(imageBase64).replace(/^data:[^;]+;base64,/, ''),
         },
+      };
+      scriptMultimodalParts.push({
+        text: `=== ATTACHED PAST PAPER / STUDENT SCRIPT IMAGE FOR EXHAUSTIVE OCR & ANNOTATION EXTRACTION ===`,
       });
+      scriptMultimodalParts.push(imgPart);
     }
 
     for (const file of normalizedFiles.slice(0, 8)) {
@@ -1016,27 +1296,31 @@ app.post('/api/scholar/chat', async (req, res) => {
 
       const roleBanner =
         role === 'mark_scheme'
-          ? `=== OFFICIAL MARK SCHEME DOCUMENT (${file.name}) ===\nRead every page of this official Mark Scheme carefully. Extract the exact question numbers, sub-questions, maximum marks, and marking points (M1/A1/B1) into "extractedMarkScheme".`
-          : role === 'question_paper'
-          ? `=== OFFICIAL QUESTION PAPER DOCUMENT (${file.name}) ===\nRead the questions, sub-questions, and mark allocations from this Question Paper.`
-          : `=== STUDENT HANDWRITING / SCRIPT DOCUMENT FOR OCR (${file.name}) ===\nPerform thorough page-by-page Visual & Handwriting OCR on this Student Script. Transcribe every single handwritten answer, numerical substitution, unit, table value, and working step verbatim into "ocrTranscription", then grade each question strictly against the Official Mark Scheme.`;
+          ? `=== OFFICIAL MARK SCHEME DOCUMENT (${file.name}) ===\nRead every single page and every sub-question of this Official Mark Scheme from start to finish. Do not miss any detail, marking code (M1/A1/B1/C1), underlined keyword, acceptable alternative ("Accept...", "Allow..."), rejected answer ("Reject...", "Do not accept...", "Ignore..."), significant figure rule, or Error Carried Forward (ECF) instruction.`
+          : `=== PAST PAPER / STUDENT SCRIPT DOCUMENT WITH ANNOTATIONS & WRITING (${file.name}) [Role: ${role}] ===\nPerform an exhaustive, page-by-page OCR transcription of this entire Past Paper / Student Script. Extract every printed question, every handwritten or digital answer, every margin annotation, calculation, crossed-out working, circled option, diagram label, graph reading, and table entry verbatim without leaving anything out.`;
 
       if (file.type === 'pdf' && file.base64Data) {
         const cleanB64 = file.base64Data.replace(/^data:[^;]+;base64,/, '');
-        if (!studentPdfBytesForOverlay && role === 'student_script') {
+        if (!studentPdfBytesForOverlay && role !== 'mark_scheme') {
           try {
             studentPdfBytesForOverlay = new Uint8Array(
               Buffer.from(cleanB64, 'base64')
             );
           } catch {}
         }
-        geminiParts.push({ text: roleBanner });
-        geminiParts.push({
+        const pdfPart = {
           inlineData: {
             mimeType: 'application/pdf',
             data: cleanB64,
           },
-        });
+        };
+        geminiParts.push({ text: roleBanner });
+        geminiParts.push(pdfPart);
+        if (role === 'mark_scheme') {
+          markSchemeMultimodalParts.push({ text: roleBanner }, pdfPart);
+        } else {
+          scriptMultimodalParts.push({ text: roleBanner }, pdfPart);
+        }
       } else if (file.type === 'image' && file.base64Data) {
         const mimeMatch = file.base64Data.match(/^data:([^;]+);base64,/);
         const cleanMime = (
@@ -1044,24 +1328,118 @@ app.post('/api/scholar/chat', async (req, res) => {
         )
           .split(';')[0]
           .trim();
-        geminiParts.push({ text: roleBanner });
-        geminiParts.push({
+        const imgPart = {
           inlineData: {
             mimeType: cleanMime || 'image/png',
             data: file.base64Data.replace(/^data:[^;]+;base64,/, ''),
           },
-        });
+        };
+        geminiParts.push({ text: roleBanner });
+        geminiParts.push(imgPart);
+        if (role === 'mark_scheme') {
+          markSchemeMultimodalParts.push({ text: roleBanner }, imgPart);
+        } else {
+          scriptMultimodalParts.push({ text: roleBanner }, imgPart);
+        }
       } else if (file.textContent) {
         const docSummary = `${roleBanner}\n${file.textContent}`;
         geminiParts.push({ text: docSummary });
-        if (role === 'mark_scheme') extractedMarkSchemeDocs.push(file.textContent);
-        else if (role === 'question_paper')
+        if (role === 'mark_scheme') {
+          extractedMarkSchemeDocs.push(file.textContent);
+          markSchemeMultimodalParts.push({ text: docSummary });
+        } else if (role === 'question_paper') {
           extractedQuestionDocs.push(file.textContent);
-        else extractedStudentDocs.push(file.textContent);
+          scriptMultimodalParts.push({ text: docSummary });
+        } else {
+          extractedStudentDocs.push(file.textContent);
+          scriptMultimodalParts.push({ text: docSummary });
+        }
       }
     }
 
+    // Dedicated Pass 1A (Exhaustive Past Paper Writing & Annotation OCR) + Pass 1B (Exhaustive Mark Scheme Extraction)
+    let dedicatedOcrTranscription = '';
+    let dedicatedMarkSchemeExtraction = '';
+
+    if (ai && (scriptMultimodalParts.length > 0 || markSchemeMultimodalParts.length > 0)) {
+      const ocrPassPromise =
+        scriptMultimodalParts.length > 0
+          ? withScholarTimeout(
+              ai.models.generateContent({
+                model: 'gemini-3.1-flash-lite',
+                contents: {
+                  parts: [
+                    ...scriptMultimodalParts,
+                    {
+                      text: `EXHAUSTIVE PAST PAPER & ANNOTATION OCR TRANSCRIPTION TASK:
+Go through EVERY SINGLE PAGE of the attached Past Paper / Student Script from Page 1 to the final page.
+DO NOT LEAVE ANYTHING OUT. DO NOT SKIP ANY QUESTION, SUB-QUESTION, OR MARGIN ANNOTATION.
+For every page and every question/sub-question (e.g., 1(a), 1(b)(i), 1(b)(ii), 2(a), etc.):
+1. State the Page Number, Question Number, Sub-question, Printed Question Text, and Max Marks [N].
+2. Transcribe 100% of the student's writing verbatim — every handwritten sentence, equation, numerical substitution, unit, chemical formula, state symbol, table value, graph reading, circled multiple-choice letter, and diagram label.
+3. Transcribe 100% of the annotations written on the paper — including margin notes, underlined words, arrows, ticks/crosses, side calculations, and crossed-out or amended work.
+Format clearly by Page and Question Number so not a single word or annotation on the paper is missed.`,
+                    },
+                  ],
+                },
+                config: {
+                  temperature: 0.0,
+                  maxOutputTokens: 65536,
+                },
+              }),
+              120000
+            )
+              .then((r) => (r.text || '').trim())
+              .catch(() => '')
+          : Promise.resolve('');
+
+      const msPassPromise =
+        markSchemeMultimodalParts.length > 0
+          ? withScholarTimeout(
+              ai.models.generateContent({
+                model: 'gemini-3.1-flash-lite',
+                contents: {
+                  parts: [
+                    ...markSchemeMultimodalParts,
+                    {
+                      text: `EXHAUSTIVE OFFICIAL MARK SCHEME EXTRACTION TASK:
+Go through EVERY SINGLE PAGE and EVERY SINGLE QUESTION of the attached Official Mark Scheme from start to finish.
+DO NOT MISS ANY DETAIL. DO NOT OMIT ANY SUB-QUESTION OR EXAMINER GUIDANCE NOTE.
+For every question and sub-question (e.g., 1(a), 1(b)(i), 1(b)(ii), 2(a), etc.):
+1. State the exact Question Number, Sub-question, and Maximum Marks available.
+2. Extract EVERY marking point verbatim (including M1, A1, B1, C1 codes or Level/Band descriptors).
+3. Extract ALL examiner notes and rules verbatim:
+   - Required/underlined keywords and exact phrasing
+   - Acceptable alternatives ("Accept...", "Allow...", "owtte", numerical tolerance ranges)
+   - Disallowed/penalized responses ("Reject...", "Do not accept...", "Ignore...")
+   - Error Carried Forward ("ECF"), significant figures, and unit rules.
+Output the complete, unabridged Mark Scheme breakdown organized by question number.`,
+                    },
+                  ],
+                },
+                config: {
+                  temperature: 0.0,
+                  maxOutputTokens: 65536,
+                },
+              }),
+              120000
+            )
+              .then((r) => (r.text || '').trim())
+              .catch(() => '')
+          : Promise.resolve('');
+
+      const [ocrTextOut, msTextOut] = await Promise.all([
+        ocrPassPromise,
+        msPassPromise,
+      ]);
+      dedicatedOcrTranscription = ocrTextOut;
+      dedicatedMarkSchemeExtraction = msTextOut;
+    }
+
     const combinedStudentSubmission = [
+      dedicatedOcrTranscription
+        ? `=== COMPLETE VERBATIM OCR TRANSCRIPTION OF PAST PAPER WRITING & ANNOTATIONS ===\n${dedicatedOcrTranscription}`
+        : '',
       extractedStudentDocs.join('\n\n'),
       studentSubmissionText,
     ]
@@ -1070,6 +1448,9 @@ app.post('/api/scholar/chat', async (req, res) => {
       .trim();
 
     const combinedMarkScheme = [
+      dedicatedMarkSchemeExtraction
+        ? `=== COMPLETE EXTRACTED OFFICIAL MARK SCHEME (ALL QUESTIONS & DETAILS) ===\n${dedicatedMarkSchemeExtraction}`
+        : '',
       extractedMarkSchemeDocs.join('\n\n'),
       markSchemeText,
     ]
@@ -1081,37 +1462,38 @@ app.post('/api/scholar/chat', async (req, res) => {
 
     const examinerJsonSystemPrompt =
       PRINCIPAL_EXAMINER_SYSTEM_PROMPT +
-      `\n\nCRITICAL MULTI-PAGE MARKED SCRIPT & EXAMINER REPORT INSTRUCTIONS (TAKE ALL THE TIME NEEDED FOR MAXIMUM ACCURACY):
-1. Inspect ONLY the actual attached documents / student text supplied in this request. NEVER invent unrelated sample questions!
+      `\n\nCRITICAL MULTI-PAGE MARKED SCRIPT, FULL OCR & MARK SCHEME CORRECTION INSTRUCTIONS (TAKE ALL THE TIME NEEDED FOR MAXIMUM ACCURACY):
+1. Inspect ONLY the actual attached documents / OCR transcription / Mark Scheme supplied in this request. NEVER invent unrelated sample questions!
 2. Identify the actual examination board, subject, syllabus code, and paper component from the attached documents or filenames and return them in "detectedBoard", "detectedSubject", and "detectedPaperComponent".
-3. Perform exhaustive, unhurried Visual & Handwriting OCR across every single page of the Student Script document(s)/image(s). Extract every handwritten line, equation, table entry, crossed-out phrase, and sentence verbatim into "ocrTranscription", organized by question number.
-4. Extract the official Mark Scheme criteria / band descriptors for each corresponding question from the attached Mark Scheme document(s) into "extractedMarkScheme".
-5. For EVERY question in "ledger", provide:
-   - "questionNumber" (e.g. "1", "2", "3", "4") and optional "subQuestion"
-   - "taskTitle" (e.g. "Describe a photograph", "Letter to a teacher", "Blog about a sport", "Persuasive article", or the specific science/math topic)
+3. ZERO-OMISSION OCR & ANNOTATION RULE: Go through the entire Past Paper / Student Script and include EVERY SINGLE piece of writing, handwritten answer, calculation, diagram label, table entry, and margin annotation in "ocrTranscription" and in each question's "studentEvidence". Do not leave anything out.
+4. ZERO-OMISSION MARK SCHEME RULE: Go through the entire Official Mark Scheme and include EVERY SINGLE marking point (M1/A1/B1/C1, band descriptors, "Accept...", "Allow...", "Reject...", "Ignore...", ECF rules, and unit requirements) in "extractedMarkScheme" and in each question's "markSchemeRequirement". Do not miss any detail.
+5. Grade EVERY question and sub-question from the Past Paper against the Mark Scheme in "ledger". For EVERY question in "ledger", provide:
+   - "questionNumber" (e.g. "1", "2", "3", "4") and optional "subQuestion" (e.g. "a", "b(i)", "b(ii)")
+   - "taskTitle" (the specific question topic or task description)
    - "maxMarks" and "awardedMarks"
-   - "contentAwarded", "contentMax", "languageAwarded", "languageMax" (if applicable, e.g. Content & Communication vs Language, or Method vs Accuracy)
-   - "levelAwarded" (e.g. "C&C Band 3 · Lang Band 2" or "Full Method & Accuracy")
-   - "wordCountWrote" (integer word count of the student's response for this question), "wordCountRequired" (e.g. "30-50 words"), "wordCountPosition" (e.g. "+34% over" or "Within target")
-   - "studentEvidence" (the full verbatim text / working the student wrote for this question)
-   - "annotatedLines": array of { "text": string, "isCorrect": boolean, "pageNumber": integer } splitting the student's response line-by-line or clause-by-clause, marking "isCorrect": true for lines that earn a green highlight & green tick (✓) and "isCorrect": false for lines with a grammar/lexical/factual/calculation slip that receive a red/pink highlight & red cross (✗)
-   - "whatEarnedTicks": array of detailed strings explaining each specific strength or mark-scheme point that earned green ticks (✓), quoting the student's actual words/working
-   - "redCrossCorrections": array of objects for EVERY red cross (✗) in this question, each with:
-       * "quotedError": the exact quote from the student's script containing the slip/error
-       * "explanation": clear grammatical, lexical, or technical explanation of why it is wrong
-       * "modelCorrection": the direct corrected sentence/working (prefixed conceptually with »)
-       * "higherRangeAlternative": an elevated Band 5 / full-mark alternative phrasing or examiner tip
-   - "examinerComment": a concise closing paragraph on this question (e.g. "Examiner comment on Q1: ...")
+   - "contentAwarded", "contentMax", "languageAwarded", "languageMax" (if applicable)
+   - "levelAwarded" (e.g. "C&C Band 3 · Lang Band 2" or "M1 A1 Awarded")
+   - "wordCountWrote", "wordCountRequired", "wordCountPosition" (if extended writing)
+   - "studentEvidence" (the complete verbatim text, equations, working, and annotations the student wrote on the paper for this question)
+   - "markSchemeRequirement" (the complete, unabridged official Mark Scheme points, acceptable alternatives, and rejection rules for this question)
+   - "annotatedLines": array of { "text": string, "isCorrect": boolean, "pageNumber": integer } splitting the student's transcribed writing & annotations line-by-line or step-by-step, marking "isCorrect": true for lines/steps that match the Mark Scheme (earning a green highlight & green tick ✓) and "isCorrect": false for lines/steps with an error or missing requirement (receiving a red/pink highlight & red cross ✗)
+   - "whatEarnedTicks": array of detailed strings explaining each specific mark-scheme point that earned green ticks (✓), quoting the student's actual transcribed words/working
+   - "redCrossCorrections": array of objects for EVERY red cross (✗) or lost mark in this question, each with:
+       * "quotedError": the exact quote/step from the student's transcribed writing or annotation containing the error or omission
+       * "explanation": clear explanation citing the exact Mark Scheme requirement that was missed or violated
+       * "modelCorrection": the exact corrected answer/working required by the Mark Scheme (prefixed conceptually with »)
+       * "higherRangeAlternative": full-mark examiner tip or acceptable alternative from the Mark Scheme
+   - "examinerComment": a detailed closing paragraph on this question
 6. Also provide whole-script synthesis fields:
    - "examinerOverview": comprehensive paragraph for the "| Examiner's overview" section
-   - "wordLimitDisciplineNote": paragraph analyzing length/precision discipline across the paper
+   - "wordLimitDisciplineNote": paragraph analyzing precision/working discipline across the paper
    - "overallFeedbackWholeScript": synthesis paragraph for the final "| Overall feedback · whole script" page
-   - "strengthsToProtect": array of 3-4 key strengths across the whole script (marked with ✓)
+   - "strengthsToProtect": array of 3-5 key strengths across the whole script (marked with ✓)
    - "whereMarksWent": array of categorized error patterns across the script (marked with ✗)
    - "nextFourTargets": array of 4 concrete, actionable exam targets for the student
-   - "projectedScoreWithFixes": paragraph stating what the exact same script would score once those four fixes are applied.`;
+   - "projectedScoreWithFixes": paragraph stating what the exact same script would score once those fixes are applied.`;
 
-    const examinerUserPrompt = `Perform exhaustive, unhurried verbatim OCR transcription on the student's submitted script, extract the Mark Scheme from the supplied Mark Scheme document, and evaluate every question using the 3-Pass Independent Marking Protocol to produce the full Marked Script & Examiner Report.
+    const examinerUserPrompt = `Go through the entire Past Paper / Student Script and extract ALL annotations and ALL writing using verbatim OCR transcription (do not leave anything out). Then go through the entire Official Mark Scheme without missing any detail, and correct every question and sub-question strictly against the Mark Scheme.
 Requested Board: ${board}
 Requested Qualification: ${qualification}
 Requested Subject: ${subject}
@@ -1122,9 +1504,9 @@ Attached Files (${normalizedFiles.length}): ${
     }
 ${userPrompt ? `User Instruction: ${userPrompt}\n` : ''}
 ${combinedQuestionPaper ? `\nQuestion Paper Text:\n${combinedQuestionPaper}\n` : ''}
-${combinedMarkScheme ? `\nMark Scheme Text:\n${combinedMarkScheme}\n` : ''}
-${combinedStudentSubmission ? `\nStudent Submission Text:\n${combinedStudentSubmission}\n` : ''}
-Take all the time needed to read every page of the attached PDF(s)/image(s) carefully and ensure 100% faithful line-by-line OCR transcription, green-tick analysis, red-cross corrections, and mark allocation.`;
+${combinedMarkScheme ? `\nMark Scheme Text (Exhaustive Extraction):\n${combinedMarkScheme}\n` : ''}
+${combinedStudentSubmission ? `\nStudent Past Paper Writing & Annotations (Exhaustive Verbatim OCR):\n${combinedStudentSubmission}\n` : ''}
+Ensure every single question, sub-question, annotation, written line, and Mark Scheme detail is included and accurately graded.`;
 
     geminiParts.push({
       text: examinerUserPrompt,
@@ -1159,7 +1541,7 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
     let modelUsedName = 'gemini-3.1-flash-lite';
 
     if (ai) {
-      // Attempt 1: gemini-3.1-flash-lite with structured responseSchema (180s timeout for deep multi-page accuracy)
+      // Attempt 1: gemini-3.1-flash-lite with structured responseSchema and 65536 maxOutputTokens
       try {
         const response = await withScholarTimeout(
           ai.models.generateContent({
@@ -1168,6 +1550,7 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
             config: {
               systemInstruction: examinerJsonSystemPrompt,
               temperature: 0.1,
+              maxOutputTokens: 65536,
               responseMimeType: 'application/json',
               responseSchema: {
                 type: Type.OBJECT,
@@ -1300,6 +1683,7 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
               config: {
                 systemInstruction: examinerJsonSystemPrompt,
                 temperature: 0.1,
+                maxOutputTokens: 65536,
                 responseMimeType: 'application/json',
               },
             }),
@@ -1323,6 +1707,7 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
                 config: {
                   systemInstruction: examinerJsonSystemPrompt,
                   temperature: 0.1,
+                  maxOutputTokens: 65536,
                   responseMimeType: 'application/json',
                 },
               }),
@@ -1365,6 +1750,7 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
     });
 
     let ocrTranscriptionResult =
+      dedicatedOcrTranscription ||
       combinedStudentSubmission ||
       ledgerData.ledger
         .map(
@@ -1376,6 +1762,7 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
         .join('\n');
 
     let extractedMarkSchemeResult =
+      dedicatedMarkSchemeExtraction ||
       combinedMarkScheme ||
       ledgerData.ledger
         .map(
@@ -1402,10 +1789,18 @@ Take all the time needed to read every page of the attached PDF(s)/image(s) care
       if (parsedGemini.detectedPaperComponent) {
         resolvedPaperComponent = String(parsedGemini.detectedPaperComponent).trim();
       }
-      if (parsedGemini.ocrTranscription) {
+      if (dedicatedOcrTranscription && parsedGemini.ocrTranscription) {
+        ocrTranscriptionResult = `${dedicatedOcrTranscription}\n\n=== QUESTION-BY-QUESTION VERIFIED TRANSCRIPTION ===\n${String(
+          parsedGemini.ocrTranscription
+        ).trim()}`;
+      } else if (parsedGemini.ocrTranscription) {
         ocrTranscriptionResult = String(parsedGemini.ocrTranscription).trim();
       }
-      if (parsedGemini.extractedMarkScheme) {
+      if (dedicatedMarkSchemeExtraction && parsedGemini.extractedMarkScheme) {
+        extractedMarkSchemeResult = `${dedicatedMarkSchemeExtraction}\n\n=== QUESTION-BY-QUESTION APPLIED MARKING SCHEME ===\n${String(
+          parsedGemini.extractedMarkScheme
+        ).trim()}`;
+      } else if (parsedGemini.extractedMarkScheme) {
         extractedMarkSchemeResult = String(parsedGemini.extractedMarkScheme).trim();
       }
 

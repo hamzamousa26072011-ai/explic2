@@ -152,3 +152,66 @@
 .animate-flip-snap {
   animation: flipCardSnap 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+.green-highlight {
+  background-color: #dcfce7;
+  border-left: 4px solid #16a34a;
+  color: #14532d;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border-radius: 4px;
+  font-weight: 500;
+  display: block;
+}
+
+.red-highlight {
+  background-color: #fee2e2;
+  border-left: 4px solid #dc2626;
+  color: #7f1d1d;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border-radius: 4px;
+  font-weight: 500;
+  display: block;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #cbd5e1;
+  padding: 0.6rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background-color: #f1f5f9;
+  font-weight: 700;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-weight: 700;
+}
+
+.markdown-body h2 {
+  font-size: 1.35rem;
+  border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 0.4rem;
+}
+
+.markdown-body blockquote {
+  border-left: 4px solid #6366f1;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+

@@ -24,6 +24,7 @@ import {
   Loader2,
   ShieldCheck,
 } from 'lucide-react';
+import { marked } from 'marked';
 import {
   ExamBoard,
   ExaminerEvaluationResult,
@@ -172,26 +173,133 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   >('outputA');
   const [copiedWhatsApp, setCopiedWhatsApp] = useState(false);
 
+  // Forensic OCR & 3-Pass Moderation Live Audit State (/api/evaluate-script)
+  const [auditScriptFiles, setAuditScriptFiles] = useState<File[]>([]);
+  const [auditSchemeFiles, setAuditSchemeFiles] = useState<File[]>([]);
+  const [auditStatusText, setAuditStatusText] = useState(
+    'Ready to run 4-Stage Forensic Transcription & 3-Pass Marking.'
+  );
+  const [isAuditStreaming, setIsAuditStreaming] = useState(false);
+  const [auditRawMarkdown, setAuditRawMarkdown] = useState('');
+  const [auditRenderedHtml, setAuditRenderedHtml] = useState('');
+  const [auditReportVisible, setAuditReportVisible] = useState(false);
+  const [copiedRawReport, setCopiedRawReport] = useState(false);
+
+  const formatHighlights = (html: string) => {
+    return html
+      .replace(
+        /\[GREEN HIGHLIGHT \| ✓\](.*?)(\n|<br>|<\/p>|<\/li>)/g,
+        '<span class="green-highlight">✓ $1</span>$2'
+      )
+      .replace(
+        /\[RED HIGHLIGHT \| ✗\](.*?)(\n|<br>|<\/p>|<\/li>)/g,
+        '<span class="red-highlight">✗ $1</span>$2'
+      );
+  };
+
+  const handleRunForensicExaminerAudit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (auditScriptFiles.length === 0 || auditSchemeFiles.length === 0) {
+      setAuditStatusText(
+        'Error: Please upload both the Student Script and the Official Mark Scheme.'
+      );
+      return;
+    }
+
+    setAuditRawMarkdown('');
+    setAuditRenderedHtml('');
+    setAuditReportVisible(true);
+    setIsAuditStreaming(true);
+    setAuditStatusText(
+      'Inspecting pages, running verbatim OCR, and moderating against Mark Scheme...'
+    );
+
+    const formData = new FormData();
+    auditScriptFiles.forEach((f) => formData.append('studentScript', f));
+    auditSchemeFiles.forEach((f) => formData.append('markScheme', f));
+
+    try {
+      const response = await fetch('/api/evaluate-script', {
+        method: 'POST',
+        headers: {
+          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to process script');
+      }
+
+      if (!response.body) {
+        throw new Error('Streaming response body unavailable');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedMarkdown = '';
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+
+        for (const line of events) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const dataStr = trimmed.replace('data: ', '').trim();
+            if (dataStr === '[DONE]') {
+              setAuditStatusText(
+                'Moderation Complete — 100% Verbatim Fidelity Lock.'
+              );
+              break;
+            }
+            const parsed = JSON.parse(dataStr);
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.text) {
+              accumulatedMarkdown += parsed.text;
+              setAuditRawMarkdown(accumulatedMarkdown);
+              const rendered = String(marked.parse(accumulatedMarkdown));
+              setAuditRenderedHtml(formatHighlights(rendered));
+            }
+          }
+        }
+      }
+      onAwardFocusXp(80);
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to process script';
+      setAuditStatusText('Error: ' + msg);
+      setAuditRenderedHtml(`<div class="red-highlight">Error: ${msg}</div>`);
+    } finally {
+      setIsAuditStreaming(false);
+    }
+  };
+
   const WORKING_STAGES = [
     {
-      badge: 'STAGE 1 / 4 • SOURCE VERIFICATION & OCR',
-      title: 'Extracting handwritten script, equations & verifying Question Paper / Mark Scheme...',
-      detail: 'Running complementary visual-inspection & handwriting OCR passes across uploaded pages',
+      badge: 'STAGE 1 / 4 • EXHAUSTIVE PAST PAPER & ANNOTATION OCR',
+      title: 'Extracting 100% of student writing, handwritten answers & paper annotations page-by-page...',
+      detail: 'Running dedicated zero-omission Vision OCR across every page, question, sub-question, equation, and margin note',
     },
     {
-      badge: 'STAGE 2 / 4 • PASS 1 INDEPENDENT MARKING',
-      title: 'Allocating Method (M), Accuracy (A) & Independent (B) marks question-by-question...',
-      detail: 'Evaluating student evidence strictly against official mark scheme requirements',
+      badge: 'STAGE 2 / 4 • COMPLETE MARK SCHEME EXTRACTION',
+      title: 'Extracting every marking point (M1/A1/B1), acceptable alternative & rejection rule from the Mark Scheme...',
+      detail: 'Reading all pages of the official Mark Scheme without omitting any detail, keyword, unit rule, or ECF note',
     },
     {
-      badge: 'STAGE 3 / 4 • PASS 2 & PASS 3 MODERATION',
-      title: 'Checking Error Carried Forward (ECF), units, significant figures & 2026 grade thresholds...',
-      detail: 'Resolving consensus across all three passes with zero double-penalization',
+      badge: 'STAGE 3 / 4 • 3-PASS MARK SCHEME CORRECTION & MODERATION',
+      title: 'Correcting every transcribed answer & annotation against the full Mark Scheme...',
+      detail: 'Allocating green ticks (✓), red-cross corrections (✗), and checking Error Carried Forward (ECF) & 2026 grade thresholds',
     },
     {
-      badge: 'STAGE 4 / 4 • ANNOTATED PDF OVERLAY',
-      title: 'Generating collision-free annotated PDF with organized ticks (✓), crosses (✗) & callouts...',
-      detail: 'Compiling Output A (PDF), Output B (Report), Output C (Lost Marks) & Output D (Summary)',
+      badge: 'STAGE 4 / 4 • MULTI-PAGE ANNOTATED PDF REPORT',
+      title: 'Generating 14-page Marked Script & Examiner Report PDF with line-by-line highlights...',
+      detail: 'Compiling Output A (Marked Script), Full OCR & Mark Scheme, Output B (Examiner Report), Output C & Output D',
     },
   ];
 
@@ -819,6 +927,187 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         </div>
       </header>
 
+      {/* CAIE / Edexcel / OxfordAQA — Principal AI Examiner & Assessment Moderator (Forensic OCR & 3-Pass Moderation) */}
+      <section className="rounded-2xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm">
+        <div className="bg-slate-900 text-white py-5 px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div>
+            <span className="text-[11px] uppercase tracking-widest bg-indigo-600 px-2.5 py-1 rounded font-semibold">
+              Forensic OCR &amp; 3-Pass Moderation
+            </span>
+            <h2 className="text-xl sm:text-2xl font-bold mt-2 text-white">
+              AI Principal Examiner &amp; Assessment Moderator
+            </h2>
+            <p className="text-slate-400 text-xs sm:text-sm mt-0.5">
+              Cambridge (IGCSE / O-Level / AS &amp; A-Level) · Pearson Edexcel · OxfordAQA
+            </p>
+          </div>
+          {attachedFiles.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                handleExecuteExaminerAction(
+                  'Evaluate attached documents and generate 14-page annotated PDF report',
+                  true
+                )
+              }
+              disabled={isProcessing}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Generate 14-Page Annotated PDF Report
+            </button>
+          )}
+        </div>
+
+        <div className={`p-6 ${isLight ? 'bg-white' : 'bg-[#111827]'}`}>
+          <form
+            id="examinerForm"
+            onSubmit={handleRunForensicExaminerAudit}
+            className="space-y-6"
+          >
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* 1. Student Script Upload */}
+              <div
+                className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
+                  isLight
+                    ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
+                    : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
+                }`}
+              >
+                <label className="block cursor-pointer">
+                  <span className="text-sm font-semibold block mb-1">
+                    1. Upload Past Paper / Student Script
+                  </span>
+                  <span className={`text-xs block mb-4 ${mutedText}`}>
+                    PDF or High-Res Images (JPG/PNG) — All pages
+                  </span>
+                  <input
+                    type="file"
+                    id="studentScript"
+                    name="studentScript"
+                    multiple
+                    accept=".pdf,image/*"
+                    required={auditScriptFiles.length === 0}
+                    onChange={(e) => {
+                      const files = e.target.files
+                        ? Array.from(e.target.files)
+                        : [];
+                      setAuditScriptFiles(files);
+                      handleFileUpload(e);
+                    }}
+                    className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                  />
+                  {auditScriptFiles.length > 0 && (
+                    <div className="mt-2.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                      {auditScriptFiles.length} Past Paper / Script file(s) ready:{' '}
+                      {auditScriptFiles.map((f) => f.name).join(', ')}
+                    </div>
+                  )}
+                </label>
+              </div>
+
+              {/* 2. Official Mark Scheme Upload */}
+              <div
+                className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
+                  isLight
+                    ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
+                    : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
+                }`}
+              >
+                <label className="block cursor-pointer">
+                  <span className="text-sm font-semibold block mb-1">
+                    2. Upload Official Mark Scheme
+                  </span>
+                  <span className={`text-xs block mb-4 ${mutedText}`}>
+                    PDF or High-Res Images (JPG/PNG) — Complete rubric
+                  </span>
+                  <input
+                    type="file"
+                    id="markScheme"
+                    name="markScheme"
+                    multiple
+                    accept=".pdf,image/*"
+                    required={auditSchemeFiles.length === 0}
+                    onChange={(e) => {
+                      const files = e.target.files
+                        ? Array.from(e.target.files)
+                        : [];
+                      setAuditSchemeFiles(files);
+                      handleFileUpload(e);
+                    }}
+                    className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
+                  />
+                  {auditSchemeFiles.length > 0 && (
+                    <div className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                      {auditSchemeFiles.length} Official Mark Scheme file(s) ready:{' '}
+                      {auditSchemeFiles.map((f) => f.name).join(', ')}
+                    </div>
+                  )}
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+              <p id="statusText" className={`text-xs sm:text-sm ${mutedText}`}>
+                {auditStatusText}
+              </p>
+              <button
+                type="submit"
+                id="submitBtn"
+                disabled={isAuditStreaming}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                {isAuditStreaming ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Running 4-Stage Forensic Audit...</span>
+                  </>
+                ) : (
+                  <span>Run Full Examiner Audit</span>
+                )}
+              </button>
+            </div>
+          </form>
+
+          {/* Live Output Container */}
+          {auditReportVisible && (
+            <div
+              id="resultContainer"
+              className={`mt-6 rounded-xl border p-6 sm:p-8 ${
+                isLight
+                  ? 'bg-white border-slate-200 text-slate-800'
+                  : 'bg-[#090D16] border-white/10 text-slate-100'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-current/10 pb-4 mb-6">
+                <h3 className="text-lg font-bold">
+                  Examiner Moderation Report
+                </h3>
+                <button
+                  type="button"
+                  id="copyBtn"
+                  onClick={() => {
+                    navigator.clipboard
+                      .writeText(auditRawMarkdown)
+                      .catch(() => {});
+                    setCopiedRawReport(true);
+                    setTimeout(() => setCopiedRawReport(false), 2000);
+                  }}
+                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded transition"
+                >
+                  {copiedRawReport ? 'Copied!' : 'Copy Raw Report'}
+                </button>
+              </div>
+              <div
+                id="reportOutput"
+                className="markdown-body leading-relaxed text-sm"
+                dangerouslySetInnerHTML={{ __html: auditRenderedHtml }}
+              />
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Main 3-Column Workspace matching reference image */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch min-h-[640px]">
         {/* COLUMN 1: HISTORY PANEL (2 cols when visible) */}
@@ -1028,10 +1317,14 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                         }`}
                       >
                         <option value="student_script">
-                          Student Handwriting / Script (OCR)
+                          Past Paper / Script (OCR Writing &amp; Annotations)
                         </option>
-                        <option value="mark_scheme">Official Mark Scheme</option>
-                        <option value="question_paper">Question Paper</option>
+                        <option value="mark_scheme">
+                          Official Mark Scheme (Full Rubric)
+                        </option>
+                        <option value="question_paper">
+                          Question Paper + Annotations (OCR)
+                        </option>
                       </select>
                     </div>
                   </div>
@@ -1485,15 +1778,21 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                                 >
                                   <div className="flex items-center justify-between pb-1.5 border-b border-current/10">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-500">
-                                      Student Handwriting OCR Transcription
+                                      Exhaustive Past Paper Writing &amp; Annotation OCR Transcription
                                     </span>
-                                    <span
-                                      className={`text-[10px] font-mono-tabular ${mutedText}`}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard?.writeText(
+                                          msg.evaluation?.ocrTranscription || ''
+                                        );
+                                      }}
+                                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${outlineBtn}`}
                                     >
-                                      Multi-Pass Vision OCR
-                                    </span>
+                                      Copy Full OCR
+                                    </button>
                                   </div>
-                                  <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                                  <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-[540px] overflow-y-auto">
                                     {msg.evaluation.ocrTranscription ||
                                       msg.evaluation.ledger
                                         .map(
@@ -1513,15 +1812,21 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                                 >
                                   <div className="flex items-center justify-between pb-1.5 border-b border-current/10">
                                     <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                                      Official Mark Scheme Criteria
+                                      Complete Official Mark Scheme Extraction (Zero Detail Omitted)
                                     </span>
-                                    <span
-                                      className={`text-[10px] font-mono-tabular ${mutedText}`}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard?.writeText(
+                                          msg.evaluation?.extractedMarkScheme || ''
+                                        );
+                                      }}
+                                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${outlineBtn}`}
                                     >
-                                      {msg.evaluation.board} Rubric
-                                    </span>
+                                      Copy Mark Scheme
+                                    </button>
                                   </div>
-                                  <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                                  <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-[540px] overflow-y-auto">
                                     {msg.evaluation.extractedMarkScheme ||
                                       msg.evaluation.ledger
                                         .map(
@@ -1542,6 +1847,87 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
                             {activeOutputView === 'outputA' && (
                               <div className="space-y-6">
+                                {/* Full Verbatim OCR Transcription & Mark Scheme Expandable Drawer right inside Output A */}
+                                <details
+                                  className={`rounded-2xl border p-4 ${subtleSurface}`}
+                                  open
+                                >
+                                  <summary className="cursor-pointer font-bold text-xs sm:text-sm flex flex-wrap items-center justify-between gap-2 select-none">
+                                    <span className="inline-flex items-center gap-2">
+                                      <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                                      <span>
+                                        Complete Verbatim OCR Transcription (All Writing &amp; Annotations) &amp; Full Mark Scheme Breakdown
+                                      </span>
+                                    </span>
+                                    <span className={`text-[11px] font-mono-tabular ${mutedText}`}>
+                                      Click to toggle • Zero-Omission Multi-Pass Extraction
+                                    </span>
+                                  </summary>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-3.5 mt-3 border-t border-current/10">
+                                    <div className="rounded-xl border border-slate-300/80 dark:border-white/10 bg-white dark:bg-[#0B0F19] p-3.5 space-y-2">
+                                      <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-indigo-500 pb-1 border-b border-slate-200 dark:border-white/10">
+                                        <span>Verbatim OCR Transcription (All Paper Writing &amp; Annotations)</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            navigator.clipboard?.writeText(
+                                              msg.evaluation?.ocrTranscription || ''
+                                            );
+                                          }}
+                                          className="underline hover:opacity-80"
+                                        >
+                                          Copy
+                                        </button>
+                                      </div>
+                                      <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto">
+                                        {msg.evaluation.ocrTranscription ||
+                                          msg.evaluation.ledger
+                                            .map(
+                                              (q) =>
+                                                `Q${q.questionNumber}${
+                                                  q.subQuestion
+                                                    ? `(${q.subQuestion})`
+                                                    : ''
+                                                }: ${q.studentEvidence}`
+                                            )
+                                            .join('\n')}
+                                      </pre>
+                                    </div>
+
+                                    <div className="rounded-xl border border-slate-300/80 dark:border-white/10 bg-white dark:bg-[#0B0F19] p-3.5 space-y-2">
+                                      <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 pb-1 border-b border-slate-200 dark:border-white/10">
+                                        <span>Complete Extracted Official Mark Scheme (All Details)</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            navigator.clipboard?.writeText(
+                                              msg.evaluation?.extractedMarkScheme || ''
+                                            );
+                                          }}
+                                          className="underline hover:opacity-80"
+                                        >
+                                          Copy
+                                        </button>
+                                      </div>
+                                      <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto">
+                                        {msg.evaluation.extractedMarkScheme ||
+                                          msg.evaluation.ledger
+                                            .map(
+                                              (q) =>
+                                                `Q${q.questionNumber}${
+                                                  q.subQuestion
+                                                    ? `(${q.subQuestion})`
+                                                    : ''
+                                                } [${q.maxMarks}m]: ${
+                                                  q.markSchemeRequirement
+                                                }`
+                                            )
+                                            .join('\n')}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                </details>
+
                                 {/* Question-by-Question Marked Script + Deep-Dive Cards matching the 14-Page Reference PDF */}
                                 {msg.evaluation.ledger.map((q, idx) => {
                                   const annotatedLines =
