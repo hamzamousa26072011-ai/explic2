@@ -2875,58 +2875,22 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                   );
                 })}
 
-                {/* LIVE AI EXAMINER WORKING INDICATOR CARD */}
+                {/* LIVE AI CHATBOT THINKING INDICATOR */}
                 {isProcessing && (
                   <div
                     id="examiner-live-working-card"
-                    className={`rounded-2xl border p-4 sm:p-5 space-y-3.5 transition-all ${
-                      isLight
-                        ? 'bg-[#F8FAFC] border-indigo-200 text-[#0F172A] shadow-sm'
-                        : 'bg-[#111827] border-[#6366F1]/40 text-white shadow-sm'
-                    }`}
+                    className={`rounded-2xl border p-4 transition-all max-w-xs flex items-center gap-3 shadow-xs ${subtleSurface}`}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-[#17365D] text-white flex items-center justify-center shrink-0">
-                          <Loader2 className="w-4 h-4 animate-spin text-[#70E0A0]" />
-                        </div>
-                        <div>
-                          <div className="text-[10px] font-bold font-mono-tabular uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                            {WORKING_STAGES[workingStageIndex].badge}
-                          </div>
-                          <div className="text-xs sm:text-sm font-bold">
-                            AI Principal Examiner is evaluating your task...
-                          </div>
-                        </div>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-lg border border-current/15 text-[11px] font-mono-tabular font-semibold shrink-0">
-                        {workingElapsedSec}s elapsed
+                    <div className="w-8 h-8 rounded-xl bg-indigo-600/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        Thinking...
                       </span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <div className="text-xs font-medium">
-                        {WORKING_STAGES[workingStageIndex].title}
-                      </div>
-                      <div className={`text-[11px] ${mutedText}`}>
-                        {WORKING_STAGES[workingStageIndex].detail}
-                      </div>
-                    </div>
-
-                    {/* 4-Step Progress Bar */}
-                    <div className="grid grid-cols-4 gap-1.5 pt-1">
-                      {WORKING_STAGES.map((st, idx) => (
-                        <div
-                          key={st.badge}
-                          className={`h-1.5 rounded-full transition-all ${
-                            idx <= workingStageIndex
-                              ? 'bg-[#70E0A0]'
-                              : isLight
-                              ? 'bg-slate-200'
-                              : 'bg-white/10'
-                          }`}
-                        />
-                      ))}
+                      <span className="text-xs font-mono-tabular opacity-60">
+                        ({workingElapsedSec}s)
+                      </span>
                     </div>
                   </div>
                 )}
@@ -2950,7 +2914,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 <div className="flex items-center gap-2 truncate">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
                   <span className="font-semibold truncate">
-                    {WORKING_STAGES[workingStageIndex].title}
+                    Thinking...
                   </span>
                 </div>
                 <span className="text-[11px] font-mono-tabular font-bold shrink-0">
@@ -3118,7 +3082,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 onChange={(e) => setInputPrompt(e.target.value)}
                 placeholder={
                   isProcessing
-                    ? 'AI Examiner is evaluating your script...'
+                    ? 'Thinking...'
                     : 'Paste your question & answer, attach photos or study notes...'
                 }
                 className={`flex-1 h-11 rounded-xl border px-4 text-xs outline-none transition-all disabled:opacity-60 ${subtleSurface}`}
@@ -3133,7 +3097,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 {isProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="hidden sm:inline">Working...</span>
+                    <span className="hidden sm:inline">Thinking...</span>
                   </>
                 ) : (
                   <Send className="w-4 h-4" />
