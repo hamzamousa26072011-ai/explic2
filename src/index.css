@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 220ms cubic-bezier(0.16, 1, 0.3, 1),
+      color 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  .font-mono-tabular {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .font-examiner {
+    font-family: 'Kalam', cursive, sans-serif;
+  }
+
+  button, a, input, select, textarea {
+    transition: all 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  button:active:not(:disabled) {
+    transform: scale(0.975);
+  }
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.45);
+}
+
+@keyframes tabSpringEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+    filter: blur(4px);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-1.5px) scale(1.002);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+@keyframes tabChildCascade {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-tab-enter {
+  animation: tabSpringEnter 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity, filter;
+}
+
+.animate-tab-enter > div > *:nth-child(1) {
+  animation: tabChildCascade 380ms cubic-bezier(0.22, 1, 0.36, 1) 20ms both;
+}
+
+.animate-tab-enter > div > *:nth-child(2) {
+  animation: tabChildCascade 420ms cubic-bezier(0.22, 1, 0.36, 1) 65ms both;
+}
+
+.animate-tab-enter > div > *:nth-child(3) {
+  animation: tabChildCascade 460ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+}
+
+.animate-tab-enter > div > *:nth-child(4) {
+  animation: tabChildCascade 500ms cubic-bezier(0.22, 1, 0.36, 1) 150ms both;
+}
+
+/* Mechanical 3D Flip Clock Animations */
+@keyframes flipFlapTop {
+  0% {
+    transform: perspective(600px) rotateX(0deg);
+  }
+  50% {
+    transform: perspective(600px) rotateX(-90deg);
+  }
+  100% {
+    transform: perspective(600px) rotateX(-90deg);
+  }
+}
+
+@keyframes flipFlapBottom {
+  0% {
+    transform: perspective(600px) rotateX(90deg);
+  }
+  50% {
+    transform: perspective(600px) rotateX(90deg);
+  }
+  100% {
+    transform: perspective(600px) rotateX(0deg);
+  }
+}
+
+@keyframes flipCardSnap {
+  0% {
+    transform: perspective(700px) rotateX(22deg) scale(0.985);
+  }
+  60% {
+    transform: perspective(700px) rotateX(-4deg) scale(1.005);
+  }
+  100% {
+    transform: perspective(700px) rotateX(0deg) scale(1);
+  }
+}
+
+.animate-flip-top {
+  transform-origin: bottom center;
+  animation: flipFlapTop 420ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  backface-visibility: hidden;
+}
+
+.animate-flip-bottom {
+  transform-origin: top center;
+  animation: flipFlapBottom 420ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  backface-visibility: hidden;
+}
+
+.animate-flip-snap {
+  animation: flipCardSnap 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

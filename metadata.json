@@ -1,0 +1,6 @@
+{
+  "name": "Explic — AI Examiner & Study OS",
+  "description": "Explic — Academic operating system, study planner, focus timer, and AI Examiner for students across all schools, universities, and examination curricula.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

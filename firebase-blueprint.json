@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public student profile for Engez Nafsak study network.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "username": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "friendCode": { "type": "string", "minLength": 5, "maxLength": 5, "pattern": "^[0-9]{5}$" },
+        "gradeYear": { "type": "string", "maxLength": 40 },
+        "targetSession": { "type": "string", "maxLength": 40 },
+        "xp": { "type": "integer" },
+        "level": { "type": "integer" },
+        "streak": { "type": "integer" },
+        "weeklyFocusMinutes": { "type": "integer" },
+        "status": { "type": "string", "enum": ["Studying ⚡", "Online", "Resting"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "username", "friendCode", "xp", "level", "streak", "weeklyFocusMinutes", "status", "updatedAt"]
+    },
+    "UserWorkspace": {
+      "title": "UserWorkspace",
+      "description": "Private student workspace containing tasks, habits, exams, focus logs, and custom study tools.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "payloadJson": { "type": "string", "maxLength": 500000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "payloadJson", "updatedAt"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Student friend request between two 5-digit friend codes.",
+      "type": "object",
+      "properties": {
+        "fromUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fromName": { "type": "string", "maxLength": 80 },
+        "fromCode": { "type": "string", "minLength": 5, "maxLength": 5, "pattern": "^[0-9]{5}$" },
+        "toUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "toCode": { "type": "string", "minLength": 5, "maxLength": 5, "pattern": "^[0-9]{5}$" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fromUid", "fromName", "fromCode", "toUid", "toCode", "status", "createdAt"]
+    },
+    "StudyRoom": {
+      "title": "StudyRoom",
+      "description": "Collaborative study room with 5-digit room code and weekly target.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 5, "maxLength": 5, "pattern": "^[0-9]{5}$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "subject": { "type": "string", "maxLength": 60 },
+        "weeklyTargetMinutes": { "type": "integer" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomCode", "name", "subject", "weeklyTargetMinutes", "ownerId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "UserProfile",
+      "description": "Public student profiles for friend discovery and leaderboards (zero PII)."
+    },
+    "/workspaces/{userId}": {
+      "schema": "UserWorkspace",
+      "description": "Private student workspace state isolated per user."
+    },
+    "/friendRequests/{requestId}": {
+      "schema": "FriendRequest",
+      "description": "Real-time student friend requests."
+    },
+    "/studyRooms/{roomId}": {
+      "schema": "StudyRoom",
+      "description": "Collaborative 5-digit study rooms."
+    }
+  }
+}
