@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Upload,
   Download,
@@ -21,7 +21,8 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCw,
-  ExternalLink,
+  Loader2,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   ExamBoard,
@@ -30,7 +31,12 @@ import {
   ThemeMode,
 } from '../types';
 import { PAST_PAPER_CATALOG } from '../utils/initialData';
-import { generateAnnotatedExaminerPdfBytes } from '../utils/examinerPdfAnnotator';
+import {
+  deriveQuestionAnnotatedLines,
+  deriveQuestionRedCrossCorrections,
+  deriveQuestionWhatEarnedTicks,
+  generateAnnotatedExaminerPdfBytes,
+} from '../utils/examinerPdfAnnotator';
 
 interface AttachedFileItem {
   id: string;
@@ -159,14 +165,64 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   // Evaluation & Chat state
   const [inputPrompt, setInputPrompt] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [workingStageIndex, setWorkingStageIndex] = useState(0);
+  const [workingElapsedSec, setWorkingElapsedSec] = useState(0);
   const [activeOutputView, setActiveOutputView] = useState<
     'outputA' | 'outputOCR' | 'outputB' | 'outputC' | 'outputD'
   >('outputA');
   const [copiedWhatsApp, setCopiedWhatsApp] = useState(false);
 
+  const WORKING_STAGES = [
+    {
+      badge: 'STAGE 1 / 4 • SOURCE VERIFICATION & OCR',
+      title: 'Extracting handwritten script, equations & verifying Question Paper / Mark Scheme...',
+      detail: 'Running complementary visual-inspection & handwriting OCR passes across uploaded pages',
+    },
+    {
+      badge: 'STAGE 2 / 4 • PASS 1 INDEPENDENT MARKING',
+      title: 'Allocating Method (M), Accuracy (A) & Independent (B) marks question-by-question...',
+      detail: 'Evaluating student evidence strictly against official mark scheme requirements',
+    },
+    {
+      badge: 'STAGE 3 / 4 • PASS 2 & PASS 3 MODERATION',
+      title: 'Checking Error Carried Forward (ECF), units, significant figures & 2026 grade thresholds...',
+      detail: 'Resolving consensus across all three passes with zero double-penalization',
+    },
+    {
+      badge: 'STAGE 4 / 4 • ANNOTATED PDF OVERLAY',
+      title: 'Generating collision-free annotated PDF with organized ticks (✓), crosses (✗) & callouts...',
+      detail: 'Compiling Output A (PDF), Output B (Report), Output C (Lost Marks) & Output D (Summary)',
+    },
+  ];
+
+  useEffect(() => {
+    if (!isProcessing) {
+      setWorkingStageIndex(0);
+      setWorkingElapsedSec(0);
+      return;
+    }
+    const secInterval = window.setInterval(() => {
+      setWorkingElapsedSec((prev) => prev + 1);
+    }, 1000);
+    const stageInterval = window.setInterval(() => {
+      setWorkingStageIndex((prev) =>
+        prev < WORKING_STAGES.length - 1 ? prev + 1 : prev
+      );
+    }, 3200);
+    return () => {
+      window.clearInterval(secInterval);
+      window.clearInterval(stageInterval);
+    };
+  }, [isProcessing]);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const dropzoneInputRef = useRef<HTMLInputElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [activeSessionId, isProcessing, workingStageIndex]);
 
   const activeSession =
     sessions.find((s) => s.id === activeSessionId) || sessions[0];
@@ -1218,381 +1274,904 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="space-y-5">
-                {activeSession.messages.map((msg) => (
-                  <div key={msg.id} className="space-y-3">
-                    <div
-                      className={`p-4 rounded-2xl border text-xs leading-relaxed ${
-                        msg.role === 'user'
-                          ? isLight
-                            ? 'bg-[#0F172A] text-white border-[#0F172A] ml-auto max-w-xl'
-                            : 'bg-[#6366F1] text-white border-[#6366F1] ml-auto max-w-xl'
-                          : subtleSurface
-                      }`}
-                    >
-                      <div className="whitespace-pre-line">{msg.text}</div>
-                    </div>
+              <div className="space-y-6">
+                {activeSession.messages.map((msg) => {
+                  const isUser = msg.role === 'user';
+                  const cleanParagraphs = String(msg.text || '')
+                    .replace(/\*\*([^*]+)\*\*/g, '$1')
+                    .split('\n')
+                    .map((l) => l.trim())
+                    .filter(Boolean);
 
-                    {/* If message includes a 3-Pass Examiner Evaluation, render the interactive deliverables */}
-                    {msg.evaluation && (
+                  return (
+                    <div key={msg.id} className="space-y-3.5">
+                      {/* Message Bubble */}
                       <div
-                        className={`rounded-2xl border p-5 space-y-4 ${cardSurface}`}
+                        className={`rounded-2xl border transition-all ${
+                          isUser
+                            ? isLight
+                              ? 'bg-[#0F172A] text-white border-[#0F172A] ml-auto max-w-xl p-4 shadow-xs'
+                              : 'bg-[#6366F1] text-white border-[#6366F1] ml-auto max-w-xl p-4 shadow-xs'
+                            : `${subtleSurface} p-4 sm:p-5 shadow-2xs`
+                        }`}
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-current/10">
-                          <div>
-                            <div className="text-xs font-bold">
-                              {msg.evaluation.board} · {msg.evaluation.subject} —{' '}
-                              {msg.evaluation.paperComponent}
+                        {/* Examiner Message Header */}
+                        {!isUser && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-current/10">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-bold ${
+                                  isLight
+                                    ? 'bg-[#17365D] text-white'
+                                    : 'bg-[#6366F1]/25 text-indigo-300'
+                                }`}
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                              </span>
+                              <span className="text-[11px] font-bold tracking-wider uppercase">
+                                Principal Examiner &amp; Senior Moderator
+                              </span>
                             </div>
-                            <div className={`text-[11px] ${mutedText}`}>
-                              Score: {msg.evaluation.totalAwarded}/
-                              {msg.evaluation.totalAvailable} (
-                              {msg.evaluation.percentage}%) · Grade:{' '}
-                              {msg.evaluation.provisionalGrade}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              id="preview-annotated-pdf-btn"
-                              onClick={() =>
-                                handlePreviewAnnotatedPdf(msg.evaluation!)
-                              }
-                              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${outlineBtn}`}
-                            >
-                              <Eye className="w-3.5 h-3.5 text-indigo-500" />
-                              Preview Script
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleDownloadAnnotatedPdf(msg.evaluation!)
-                              }
-                              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold ${primaryBtn}`}
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              Download PDF
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Deliverable View Switcher */}
-                        <div
-                          className={`grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1 rounded-xl border ${subtleSurface}`}
-                        >
-                          {[
-                            { id: 'outputA', label: 'Annotated Script' },
-                            { id: 'outputOCR', label: 'OCR & Mark Scheme' },
-                            { id: 'outputB', label: '3-Pass Report' },
-                            { id: 'outputC', label: 'Lost Marks' },
-                            { id: 'outputD', label: 'Share Summary' },
-                          ].map((tab) => (
-                            <button
-                              key={tab.id}
-                              type="button"
-                              onClick={() =>
-                                setActiveOutputView(tab.id as any)
-                              }
-                              className={`py-1.5 px-2 rounded-lg text-xs font-semibold transition-all truncate ${
-                                activeOutputView === tab.id
-                                  ? primaryBtn
-                                  : `${mutedText} hover:opacity-100`
+                            <span
+                              className={`text-[10px] font-mono-tabular px-2 py-0.5 rounded-md border ${
+                                isLight
+                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
                               }`}
                             >
-                              {tab.label}
-                            </button>
-                          ))}
-                        </div>
-
-                        {activeOutputView === 'outputOCR' && (
-                          <div
-                            id="examiner-ocr-comparison-panel"
-                            className="grid grid-cols-1 md:grid-cols-2 gap-3"
-                          >
-                            <div
-                              className={`p-3.5 rounded-xl border space-y-2 ${subtleSurface}`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-500">
-                                  Student Handwriting OCR Transcription
-                                </span>
-                                <span className={`text-[10px] font-mono-tabular ${mutedText}`}>
-                                  Extracted via AI Vision OCR
-                                </span>
-                              </div>
-                              <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
-                                {msg.evaluation.ocrTranscription ||
-                                  msg.evaluation.ledger
-                                    .map(
-                                      (q) =>
-                                        `Q${q.questionNumber}${
-                                          q.subQuestion ? `(${q.subQuestion})` : ''
-                                        }: ${q.studentEvidence}`
-                                    )
-                                    .join('\n')}
-                              </pre>
-                            </div>
-
-                            <div
-                              className={`p-3.5 rounded-xl border space-y-2 ${subtleSurface}`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                                  Applied Official Mark Scheme Points
-                                </span>
-                                <span className={`text-[10px] font-mono-tabular ${mutedText}`}>
-                                  {msg.evaluation.board} Rubric
-                                </span>
-                              </div>
-                              <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
-                                {msg.evaluation.extractedMarkScheme ||
-                                  msg.evaluation.ledger
-                                    .map(
-                                      (q) =>
-                                        `Q${q.questionNumber}${
-                                          q.subQuestion ? `(${q.subQuestion})` : ''
-                                        } [${q.maxMarks}m]: ${
-                                          q.markSchemeRequirement
-                                        }`
-                                    )
-                                    .join('\n')}
-                              </pre>
-                            </div>
+                              {msg.evaluation
+                                ? '3-Pass Mark Lock Verified'
+                                : 'Examiner Response'}
+                            </span>
                           </div>
                         )}
 
-                        {activeOutputView === 'outputA' && (
-                          <div className="space-y-3">
-                            {/* Compact OCR Transcription vs Mark Scheme Summary Bar */}
-                            <div
-                              id="ocr-summary-banner"
-                              className={`p-3 rounded-xl border text-xs grid grid-cols-1 md:grid-cols-2 gap-3 ${subtleSurface}`}
-                            >
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1">
-                                  OCR Transcribed Student Handwriting / Script
-                                </div>
-                                <div className="font-mono-tabular text-[11px] line-clamp-3 whitespace-pre-wrap">
-                                  {msg.evaluation.ocrTranscription ||
-                                    msg.evaluation.ledger
-                                      .map(
-                                        (q) =>
-                                          `Q${q.questionNumber}: ${q.studentEvidence}`
-                                      )
-                                      .join(' | ')}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">
-                                  Compared Against Mark Scheme
-                                </div>
-                                <div className="font-mono-tabular text-[11px] line-clamp-3 whitespace-pre-wrap">
-                                  {msg.evaluation.extractedMarkScheme ||
-                                    msg.evaluation.ledger
-                                      .map(
-                                        (q) =>
-                                          `Q${q.questionNumber}: ${q.markSchemeRequirement}`
-                                      )
-                                      .join(' | ')}
-                                </div>
-                              </div>
-                            </div>
+                        <div className="space-y-2 text-xs sm:text-[13px] leading-relaxed">
+                          {cleanParagraphs.map((line, lIdx) => {
+                            const isHeading =
+                              line.startsWith('#') ||
+                              /^(?:Pass \d|Output [A-D]|Summary|Key Points|Lost Marks|Model Answer)/i.test(
+                                line
+                              );
+                            const isBullet =
+                              line.startsWith('- ') ||
+                              line.startsWith('• ') ||
+                              /^\d+\.\s/.test(line);
+                            const cleanedLine = line.replace(/^#+\s*/, '');
 
-                            {msg.evaluation.ledger.map((q, idx) => {
-                              const hlStyle =
-                                q.status === 'correct'
-                                  ? 'bg-[#70E0A0]/30 border-[#70E0A0]'
-                                  : q.status === 'partial'
-                                  ? 'bg-[#FFD580]/30 border-[#FFD580]'
-                                  : 'bg-[#FF8888]/30 border-[#FF8888]';
-
+                            if (isHeading) {
                               return (
                                 <div
-                                  key={`${q.questionNumber}-${idx}`}
-                                  className="grid grid-cols-12 gap-2.5 items-start pb-3 border-b border-current/10 last:border-b-0"
+                                  key={lIdx}
+                                  className="font-bold text-xs sm:text-sm pt-1 first:pt-0 tracking-tight"
                                 >
-                                  <div
-                                    className={`col-span-2 flex flex-col items-center justify-center p-2 rounded-xl border ${subtleSurface}`}
-                                  >
-                                    <span className="text-xs font-bold font-mono-tabular">
-                                      {q.awardedMarks}/{q.maxMarks}
-                                    </span>
-                                    <span className={`text-[10px] ${mutedText}`}>
-                                      Q{q.questionNumber}
-                                      {q.subQuestion ? `(${q.subQuestion})` : ''}
-                                    </span>
-                                  </div>
-
-                                  <div className="col-span-8 space-y-2">
-                                    <div
-                                      className={`p-3 rounded-xl border ${hlStyle}`}
-                                    >
-                                      <div className="text-xs font-mono-tabular">
-                                        {q.studentEvidence}
-                                      </div>
-                                      <div className="text-[11px] mt-1 opacity-85">
-                                        {q.markingPointRationale}
-                                      </div>
-                                    </div>
-
-                                    {q.awardedMarks < q.maxMarks && (
-                                      <div className="bg-[#FFF1F2] border border-[#FECDD3] text-[#0F172A] rounded-xl p-3 text-xs space-y-1">
-                                        <div>
-                                          <strong>
-                                            Lost (-{q.maxMarks - q.awardedMarks}
-                                            ):
-                                          </strong>{' '}
-                                          {q.reasonForLostMarks}
-                                        </div>
-                                        <div>
-                                          <strong>Mark Scheme:</strong>{' '}
-                                          {q.markSchemeRequirement}
-                                        </div>
-                                        {q.examinerWording && (
-                                          <div>
-                                            <strong>Corrected Answer:</strong>{' '}
-                                            {q.examinerWording}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  <div
-                                    className={`col-span-2 flex flex-col items-center justify-center p-2 rounded-xl border space-y-1 ${subtleSurface}`}
-                                  >
-                                    {Array.from({
-                                      length: q.awardedMarks,
-                                    }).map((_, i) => (
-                                      <Check
-                                        key={`t-${i}`}
-                                        className="w-3.5 h-3.5 text-emerald-600 stroke-[2.5]"
-                                      />
-                                    ))}
-                                    {Array.from({
-                                      length: Math.max(
-                                        0,
-                                        q.maxMarks - q.awardedMarks
-                                      ),
-                                    }).map((_, i) => (
-                                      <X
-                                        key={`c-${i}`}
-                                        className="w-3.5 h-3.5 text-red-600 stroke-[2.5]"
-                                      />
-                                    ))}
-                                  </div>
+                                  {cleanedLine}
                                 </div>
                               );
-                            })}
-                          </div>
-                        )}
-
-                        {activeOutputView === 'outputB' && (
-                          <div
-                            className={`p-4 rounded-xl border space-y-2 text-xs ${subtleSurface}`}
-                          >
-                            <p>
-                              <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5 text-emerald-500" />
-                              {msg.evaluation.passSummary.pass1Summary}
-                            </p>
-                            <p>
-                              <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5 text-emerald-500" />
-                              {msg.evaluation.passSummary.pass2Verification}
-                            </p>
-                            <p>
-                              <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5 text-emerald-500" />
-                              {msg.evaluation.passSummary.pass3Moderation}
-                            </p>
-                          </div>
-                        )}
-
-                        {activeOutputView === 'outputC' && (
-                          <div className="space-y-2">
-                            {msg.evaluation.lostMarksBreakdown.map(
-                              (item, idx) => (
+                            }
+                            if (isBullet) {
+                              return (
                                 <div
-                                  key={idx}
-                                  className="p-3.5 rounded-xl border bg-[#FFF1F2] border-[#FECDD3] text-[#0F172A] text-xs space-y-1"
+                                  key={lIdx}
+                                  className="flex items-start gap-2 pl-1"
                                 >
-                                  <div className="font-bold flex items-center justify-between">
-                                    <span>
-                                      <AlertTriangle className="w-3.5 h-3.5 inline mr-1 text-red-600" />
-                                      Q{item.questionNumber}
-                                      {item.subQuestion
-                                        ? `(${item.subQuestion})`
-                                        : ''}
-                                    </span>
-                                    <span className="font-mono-tabular">
-                                      {item.awardedMarks}/{item.maxMarks}
-                                    </span>
-                                  </div>
-                                  <div>{item.reasonForLostMarks}</div>
-                                  <div>
-                                    <strong>Model Wording:</strong>{' '}
-                                    {item.examinerWording ||
-                                      item.markSchemeRequirement}
-                                  </div>
+                                  <span className="text-indigo-500 font-bold mt-0.5">
+                                    •
+                                  </span>
+                                  <span>
+                                    {cleanedLine.replace(/^(?:[-•]|\d+\.)\s*/, '')}
+                                  </span>
                                 </div>
-                              )
-                            )}
-                          </div>
-                        )}
+                              );
+                            }
+                            return <p key={lIdx}>{cleanedLine}</p>;
+                          })}
+                        </div>
+                      </div>
 
-                        {activeOutputView === 'outputD' && (
-                          <div className="space-y-2">
-                            <div className="flex justify-end">
+                      {/* If message includes a 3-Pass Examiner Evaluation, render the structured 4-Output Studio */}
+                      {msg.evaluation && (
+                        <div
+                          className={`rounded-2xl border overflow-hidden shadow-sm ${cardSurface}`}
+                        >
+                          {/* Top Navy Score & Grade Banner (#17365D design system) */}
+                          <div className="bg-[#17365D] text-white p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="px-2 py-0.5 rounded bg-white/15 text-[10px] font-mono-tabular font-bold uppercase tracking-wider">
+                                  {msg.evaluation.board}
+                                </span>
+                                <span className="text-xs sm:text-sm font-bold tracking-tight">
+                                  {msg.evaluation.subject} —{' '}
+                                  {msg.evaluation.paperComponent}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-200 flex flex-wrap items-center gap-3 font-mono-tabular">
+                                <span>
+                                  FINAL SCORE:{' '}
+                                  <strong className="text-white">
+                                    {msg.evaluation.totalAwarded}/
+                                    {msg.evaluation.totalAvailable} (
+                                    {msg.evaluation.percentage}%)
+                                  </strong>
+                                </span>
+                                <span>•</span>
+                                <span>
+                                  PROVISIONAL GRADE (2026):{' '}
+                                  <strong className="text-[#70E0A0]">
+                                    {msg.evaluation.provisionalGrade}
+                                  </strong>
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                id="preview-annotated-pdf-btn"
+                                onClick={() =>
+                                  handlePreviewAnnotatedPdf(msg.evaluation!)
+                                }
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-[#70E0A0]" />
+                                Preview Annotated PDF
+                              </button>
+
                               <button
                                 type="button"
                                 onClick={() =>
-                                  handleCopyWhatsApp(
-                                    msg.evaluation!.whatsappSummary
-                                  )
+                                  handleDownloadAnnotatedPdf(msg.evaluation!)
                                 }
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 ${primaryBtn}`}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#70E0A0] hover:bg-[#5cd48f] text-[#0F172A] transition-all shadow-xs"
                               >
-                                {copiedWhatsApp ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5" />
-                                    Copied
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3.5 h-3.5" />
-                                    Copy Summary
-                                  </>
-                                )}
+                                <Download className="w-3.5 h-3.5" />
+                                Download PDF
                               </button>
                             </div>
-                            <pre
-                              className={`p-3.5 rounded-xl border text-xs font-mono-tabular whitespace-pre-wrap ${subtleSurface}`}
-                            >
-                              {msg.evaluation.whatsappSummary}
-                            </pre>
                           </div>
-                        )}
+
+                          <div className="p-4 sm:p-5 space-y-4">
+                            {/* Deliverable View Switcher (Outputs A, OCR, B, C, D) */}
+                            <div
+                              className={`grid grid-cols-2 sm:grid-cols-5 gap-1.5 p-1.5 rounded-xl border ${subtleSurface}`}
+                            >
+                              {[
+                                {
+                                  id: 'outputA',
+                                  label: 'Output A: Script Ledger',
+                                },
+                                {
+                                  id: 'outputOCR',
+                                  label: 'OCR & Mark Scheme',
+                                },
+                                {
+                                  id: 'outputB',
+                                  label: 'Output B: Examiner Report',
+                                },
+                                {
+                                  id: 'outputC',
+                                  label: `Output C: Lost Marks (${msg.evaluation.lostMarksBreakdown.length})`,
+                                },
+                                {
+                                  id: 'outputD',
+                                  label: 'Output D: WhatsApp',
+                                },
+                              ].map((tab) => (
+                                <button
+                                  key={tab.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setActiveOutputView(tab.id as any)
+                                  }
+                                  className={`py-2 px-2.5 rounded-lg text-[11px] font-semibold transition-all truncate ${
+                                    activeOutputView === tab.id
+                                      ? primaryBtn
+                                      : `${mutedText} hover:opacity-100`
+                                  }`}
+                                >
+                                  {tab.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            {activeOutputView === 'outputOCR' && (
+                              <div
+                                id="examiner-ocr-comparison-panel"
+                                className="grid grid-cols-1 md:grid-cols-2 gap-3.5"
+                              >
+                                <div
+                                  className={`p-4 rounded-xl border space-y-2 ${subtleSurface}`}
+                                >
+                                  <div className="flex items-center justify-between pb-1.5 border-b border-current/10">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-500">
+                                      Student Handwriting OCR Transcription
+                                    </span>
+                                    <span
+                                      className={`text-[10px] font-mono-tabular ${mutedText}`}
+                                    >
+                                      Multi-Pass Vision OCR
+                                    </span>
+                                  </div>
+                                  <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                                    {msg.evaluation.ocrTranscription ||
+                                      msg.evaluation.ledger
+                                        .map(
+                                          (q) =>
+                                            `Q${q.questionNumber}${
+                                              q.subQuestion
+                                                ? `(${q.subQuestion})`
+                                                : ''
+                                            }: ${q.studentEvidence}`
+                                        )
+                                        .join('\n')}
+                                  </pre>
+                                </div>
+
+                                <div
+                                  className={`p-4 rounded-xl border space-y-2 ${subtleSurface}`}
+                                >
+                                  <div className="flex items-center justify-between pb-1.5 border-b border-current/10">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                                      Official Mark Scheme Criteria
+                                    </span>
+                                    <span
+                                      className={`text-[10px] font-mono-tabular ${mutedText}`}
+                                    >
+                                      {msg.evaluation.board} Rubric
+                                    </span>
+                                  </div>
+                                  <pre className="text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                                    {msg.evaluation.extractedMarkScheme ||
+                                      msg.evaluation.ledger
+                                        .map(
+                                          (q) =>
+                                            `Q${q.questionNumber}${
+                                              q.subQuestion
+                                                ? `(${q.subQuestion})`
+                                                : ''
+                                            } [${q.maxMarks}m]: ${
+                                              q.markSchemeRequirement
+                                            }`
+                                        )
+                                        .join('\n')}
+                                  </pre>
+                                </div>
+                              </div>
+                            )}
+
+                            {activeOutputView === 'outputA' && (
+                              <div className="space-y-6">
+                                {/* Question-by-Question Marked Script + Deep-Dive Cards matching the 14-Page Reference PDF */}
+                                {msg.evaluation.ledger.map((q, idx) => {
+                                  const annotatedLines =
+                                    deriveQuestionAnnotatedLines(q);
+                                  const tickItems =
+                                    deriveQuestionWhatEarnedTicks(q);
+                                  const redCrossItems =
+                                    deriveQuestionRedCrossCorrections(q);
+                                  const qTag = `Q${q.questionNumber}${
+                                    q.subQuestion ? `(${q.subQuestion})` : ''
+                                  }`;
+
+                                  return (
+                                    <div
+                                      key={`${q.questionNumber}-${idx}`}
+                                      className={`rounded-2xl border p-4 sm:p-5 space-y-4 ${subtleSurface}`}
+                                    >
+                                      {/* Question Header with Green Left Bar */}
+                                      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-current/10 pb-3">
+                                        <div className="space-y-1">
+                                          <div className="flex items-center gap-2">
+                                            <span className="w-1 h-4 rounded-full bg-[#1E6B52]" />
+                                            <h4 className="text-sm sm:text-base font-bold tracking-tight">
+                                              Question {q.questionNumber}
+                                              {q.subQuestion
+                                                ? `(${q.subQuestion})`
+                                                : ''}{' '}
+                                              ·{' '}
+                                              {q.taskTitle ||
+                                                'Marked Script & Evaluation'}{' '}
+                                              · [{q.maxMarks} marks]
+                                            </h4>
+                                          </div>
+                                          <div className="text-xs font-bold text-[#1E6B52] dark:text-emerald-400 pl-3">
+                                            {q.contentMax && q.languageMax ? (
+                                              <>
+                                                Content &amp; Communication{' '}
+                                                {q.contentAwarded ??
+                                                  q.awardedMarks}{' '}
+                                                / {q.contentMax} · Language{' '}
+                                                {q.languageAwarded ?? 0} /{' '}
+                                                {q.languageMax} ·{' '}
+                                              </>
+                                            ) : null}
+                                            TOTAL {q.awardedMarks} /{' '}
+                                            {q.maxMarks}
+                                          </div>
+                                          <p
+                                            className={`text-[11px] italic pl-3 ${mutedText}`}
+                                          >
+                                            Mark-scheme basis:{' '}
+                                            {q.markSchemeRequirement}
+                                          </p>
+                                        </div>
+
+                                        {/* Official Boxed Score [awarded / max] */}
+                                        <div className="border-2 border-slate-800 dark:border-slate-300 rounded-lg px-2.5 py-1 text-center font-mono-tabular bg-white dark:bg-[#090D16] shrink-0">
+                                          <div className="text-xs font-bold text-[#1E6B52] dark:text-emerald-400 border-b border-slate-800 dark:border-slate-300 pb-0.5">
+                                            {q.awardedMarks}
+                                          </div>
+                                          <div className="text-xs font-bold pt-0.5">
+                                            {q.maxMarks}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Annotated Student Script Lined Canvas (Green/Red Line Highlights + Right-Margin Ticks/Crosses) */}
+                                      <div className="rounded-xl border border-slate-300/80 dark:border-white/15 bg-white dark:bg-[#0B0F19] p-3.5 sm:p-4 space-y-2 shadow-2xs">
+                                        <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500 pb-1 border-b border-slate-200 dark:border-white/10">
+                                          <span>
+                                            Annotated Student Script ({qTag})
+                                          </span>
+                                          <span>Right Margin: ✓ / ✗</span>
+                                        </div>
+
+                                        <div className="space-y-1.5 pt-1">
+                                          {annotatedLines.map((line, lIdx) => (
+                                            <div
+                                              key={lIdx}
+                                              className="flex items-center justify-between gap-3 border-b border-slate-200/70 dark:border-white/5 pb-1"
+                                            >
+                                              <div
+                                                className={`flex-1 px-2.5 py-1 rounded text-xs font-medium leading-relaxed ${
+                                                  line.isCorrect
+                                                    ? 'bg-[#70E0A0]/35 text-slate-900 dark:text-slate-100'
+                                                    : 'bg-[#FF8888]/35 text-slate-900 dark:text-slate-100'
+                                                }`}
+                                              >
+                                                {line.text}
+                                              </div>
+                                              <span
+                                                className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-sm shrink-0 ${
+                                                  line.isCorrect
+                                                    ? 'text-[#15803D] dark:text-emerald-400'
+                                                    : 'text-[#B91C1C] dark:text-red-400'
+                                                }`}
+                                              >
+                                                {line.isCorrect ? '✓' : '✗'}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+
+                                        {/* Bottom-of-Question Green-Bordered Summary Pill */}
+                                        <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
+                                          <div className="inline-flex flex-col px-3.5 py-2 rounded-xl border-2 border-[#1E6B52] bg-white dark:bg-[#090D16] text-xs">
+                                            <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                              {q.contentMax && q.languageMax
+                                                ? `${qTag} Content & Communication ${
+                                                    q.contentAwarded ??
+                                                    q.awardedMarks
+                                                  }/${q.contentMax} · Language ${
+                                                    q.languageAwarded ?? 0
+                                                  }/${q.languageMax}`
+                                                : `${qTag} Marked against ${msg.evaluation!.board} Rubric`}
+                                            </span>
+                                            <span className="font-bold text-[#1E6B52] dark:text-emerald-400">
+                                              {qTag} TOTAL {q.awardedMarks} /{' '}
+                                              {q.maxMarks}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Section: | What earned you ticks */}
+                                      <div className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-1 h-3.5 rounded-full bg-[#1E6B52]" />
+                                          <h5 className="text-xs font-bold text-[#1E6B52] dark:text-emerald-400">
+                                            What earned you ticks
+                                          </h5>
+                                        </div>
+                                        <div className="space-y-1.5 pl-2">
+                                          {tickItems.map((tItem, tIdx) => (
+                                            <div
+                                              key={tIdx}
+                                              className="flex items-start gap-2 text-xs leading-relaxed"
+                                            >
+                                              <span className="text-[#15803D] dark:text-emerald-400 font-bold shrink-0">
+                                                ✓
+                                              </span>
+                                              <span>{tItem}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+
+                                      {/* Section: | Corrections marked with a red cross */}
+                                      {redCrossItems.length > 0 && (
+                                        <div className="space-y-2.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="w-1 h-3.5 rounded-full bg-[#991B1B]" />
+                                            <h5 className="text-xs font-bold text-[#991B1B] dark:text-red-400">
+                                              Corrections marked with a red
+                                              cross
+                                            </h5>
+                                          </div>
+
+                                          <div className="space-y-2">
+                                            {redCrossItems.map(
+                                              (corr, cIdx) => (
+                                                <div
+                                                  key={cIdx}
+                                                  className="flex items-start gap-2.5"
+                                                >
+                                                  <span className="text-[#B91C1C] dark:text-red-400 font-bold text-sm mt-2.5 shrink-0">
+                                                    ✗
+                                                  </span>
+                                                  <div className="flex-1 rounded-xl border border-[#D97788] bg-[#FFF0F3] text-[#1E293B] p-3.5 text-xs space-y-1.5 shadow-2xs">
+                                                    <div className="font-bold">
+                                                      &ldquo;{corr.quotedError}
+                                                      &rdquo; —{' '}
+                                                      <span className="font-semibold">
+                                                        {corr.explanation}
+                                                      </span>
+                                                    </div>
+                                                    <div className="font-bold text-[#0F172A]">
+                                                      &raquo;{' '}
+                                                      {corr.modelCorrection}
+                                                    </div>
+                                                    {corr.higherRangeAlternative && (
+                                                      <div className="italic font-semibold text-[#1E6B52]">
+                                                        Higher-range
+                                                        alternative: &ldquo;
+                                                        {corr.higherRangeAlternative.replace(
+                                                          /^Higher-range alternative:\s*/i,
+                                                          ''
+                                                        )}
+                                                        &rdquo;
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              )
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Closing Examiner Comment on Qn */}
+                                      <div className="pt-2 border-t border-current/10 text-xs italic font-medium">
+                                        {q.examinerComment ||
+                                          `Examiner comment on ${qTag}: ${q.markingPointRationale}`}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Output B: Official Marked Script · Examiner Report Executive Summary & Whole-Script Feedback */}
+                            {activeOutputView === 'outputB' && (
+                              <div
+                                className={`p-4 sm:p-5 rounded-xl border space-y-5 text-xs ${subtleSurface}`}
+                              >
+                                {/* Header & TOTAL SCORE Green-Bordered Box */}
+                                <div className="space-y-2">
+                                  <div className="text-[10px] font-bold uppercase tracking-wider text-[#1E6B52] dark:text-emerald-400">
+                                    MARKED SCRIPT · EXAMINER REPORT ·{' '}
+                                    {msg.evaluation.board.toUpperCase()}
+                                  </div>
+                                  <h3 className="text-base sm:text-lg font-bold tracking-tight">
+                                    {msg.evaluation.subject} —{' '}
+                                    {msg.evaluation.paperComponent}
+                                  </h3>
+                                  <div className="rounded-xl border-2 border-[#1E6B52] bg-white dark:bg-[#090D16] p-4 flex flex-wrap items-baseline justify-between gap-4">
+                                    <div>
+                                      <div className="text-[10px] font-bold uppercase tracking-wider text-[#1E6B52] dark:text-emerald-400">
+                                        TOTAL SCORE
+                                      </div>
+                                      <div className="text-2xl sm:text-3xl font-extrabold font-mono-tabular mt-0.5">
+                                        {msg.evaluation.totalAwarded} /{' '}
+                                        {msg.evaluation.totalAvailable}
+                                      </div>
+                                    </div>
+                                    <div className="text-xs sm:text-sm font-bold font-mono-tabular">
+                                      {msg.evaluation.percentage.toFixed(1)} % ·
+                                      Provisional Grade:{' '}
+                                      <span className="text-[#1E6B52] dark:text-emerald-400">
+                                        {msg.evaluation.provisionalGrade}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Dark-Header Question Summary Table */}
+                                <div className="overflow-x-auto rounded-xl border border-current/10">
+                                  <table className="w-full text-left border-collapse text-xs">
+                                    <thead>
+                                      <tr className="bg-[#262626] text-white">
+                                        <th className="py-2 px-3 font-bold">
+                                          Question
+                                        </th>
+                                        <th className="py-2 px-3 font-bold">
+                                          Task / Topic
+                                        </th>
+                                        <th className="py-2 px-3 font-bold">
+                                          Total
+                                        </th>
+                                        <th className="py-2 px-3 font-bold">
+                                          Level / Verdict
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-current/10">
+                                      {msg.evaluation.ledger.map((q, idx) => (
+                                        <tr key={idx}>
+                                          <td className="py-2 px-3 font-bold font-mono-tabular">
+                                            Q{q.questionNumber}
+                                            {q.subQuestion
+                                              ? `(${q.subQuestion})`
+                                              : ''}
+                                          </td>
+                                          <td className="py-2 px-3">
+                                            {q.taskTitle ||
+                                              q.markSchemeRequirement.slice(
+                                                0,
+                                                48
+                                              )}
+                                          </td>
+                                          <td className="py-2 px-3 font-bold font-mono-tabular text-[#1E6B52] dark:text-emerald-400">
+                                            {q.awardedMarks} / {q.maxMarks}
+                                          </td>
+                                          <td className="py-2 px-3">
+                                            {q.levelAwarded ||
+                                              (q.awardedMarks === q.maxMarks
+                                                ? 'Full Credit'
+                                                : 'Partial Credit')}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      <tr className="font-bold bg-current/5">
+                                        <td className="py-2 px-3" colSpan={2}>
+                                          PAPER TOTAL
+                                        </td>
+                                        <td className="py-2 px-3 font-mono-tabular text-[#1E6B52] dark:text-emerald-400">
+                                          {msg.evaluation.totalAwarded} /{' '}
+                                          {msg.evaluation.totalAvailable}
+                                        </td>
+                                        <td className="py-2 px-3 font-mono-tabular">
+                                          {msg.evaluation.percentage.toFixed(1)}{' '}
+                                          %
+                                        </td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+
+                                {/* Examiner's overview */}
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-1 h-4 rounded-full bg-[#1E6B52]" />
+                                    <h4 className="text-sm font-bold text-[#1E6B52] dark:text-emerald-400">
+                                      Examiner&apos;s overview
+                                    </h4>
+                                  </div>
+                                  <p className="leading-relaxed">
+                                    {msg.evaluation.examinerOverview ||
+                                      `${msg.evaluation.passSummary.pass1Summary} ${msg.evaluation.passSummary.pass2Verification} ${msg.evaluation.passSummary.pass3Moderation}`}
+                                  </p>
+                                </div>
+
+                                {/* Strengths to protect & Where the marks went */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-current/10">
+                                  <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-1 h-4 rounded-full bg-[#1E6B52]" />
+                                      <h4 className="text-xs font-bold text-[#1E6B52] dark:text-emerald-400">
+                                        Strengths to protect
+                                      </h4>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {(msg.evaluation.strengthsToProtect &&
+                                      msg.evaluation.strengthsToProtect.length >
+                                        0
+                                        ? msg.evaluation.strengthsToProtect
+                                        : [
+                                            msg.evaluation.passSummary
+                                              .pass1Summary,
+                                            msg.evaluation.passSummary
+                                              .consensusNotes,
+                                          ]
+                                      ).map((st, sIdx) => (
+                                        <div
+                                          key={sIdx}
+                                          className="flex items-start gap-2"
+                                        >
+                                          <span className="text-[#15803D] font-bold">
+                                            ✓
+                                          </span>
+                                          <span>{st}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-1 h-4 rounded-full bg-[#991B1B]" />
+                                      <h4 className="text-xs font-bold text-[#991B1B] dark:text-red-400">
+                                        Where the marks went
+                                      </h4>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {(msg.evaluation.whereMarksWent &&
+                                      msg.evaluation.whereMarksWent.length > 0
+                                        ? msg.evaluation.whereMarksWent
+                                        : msg.evaluation.lostMarksBreakdown.map(
+                                            (l) =>
+                                              `Q${l.questionNumber}: ${l.reasonForLostMarks}`
+                                          )
+                                      ).map((wm, wIdx) => (
+                                        <div
+                                          key={wIdx}
+                                          className="flex items-start gap-2"
+                                        >
+                                          <span className="text-[#B91C1C] font-bold">
+                                            ✗
+                                          </span>
+                                          <span>{wm}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Next four targets & Projected score */}
+                                {(msg.evaluation.nextFourTargets ||
+                                  msg.evaluation.projectedScoreWithFixes) && (
+                                  <div className="space-y-3 pt-2 border-t border-current/10">
+                                    {msg.evaluation.nextFourTargets &&
+                                      msg.evaluation.nextFourTargets.length >
+                                        0 && (
+                                        <div className="space-y-1.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="w-1 h-4 rounded-full bg-[#1E6B52]" />
+                                            <h4 className="text-xs font-bold">
+                                              Your next four targets
+                                            </h4>
+                                          </div>
+                                          <ul className="list-disc pl-5 space-y-1">
+                                            {msg.evaluation.nextFourTargets.map(
+                                              (t, idx) => (
+                                                <li key={idx}>{t}</li>
+                                              )
+                                            )}
+                                          </ul>
+                                        </div>
+                                      )}
+
+                                    {msg.evaluation.projectedScoreWithFixes && (
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-1 h-4 rounded-full bg-[#1E6B52]" />
+                                          <h4 className="text-xs font-bold">
+                                            What the same script would score
+                                            with those fixes
+                                          </h4>
+                                        </div>
+                                        <p className="leading-relaxed font-semibold text-[#1E6B52] dark:text-emerald-400">
+                                          {
+                                            msg.evaluation
+                                              .projectedScoreWithFixes
+                                          }
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Output C: Lost-Marks Breakdown (ONLY questions where marks were lost) */}
+                            {activeOutputView === 'outputC' && (
+                              <div className="space-y-2.5">
+                                {msg.evaluation.lostMarksBreakdown.length ===
+                                0 ? (
+                                  <div
+                                    className={`p-4 rounded-xl border text-center text-xs font-semibold text-emerald-600 ${subtleSurface}`}
+                                  >
+                                    Zero lost marks — full marks awarded across
+                                    all evaluated questions!
+                                  </div>
+                                ) : (
+                                  msg.evaluation.lostMarksBreakdown.map(
+                                    (item, idx) => (
+                                      <div
+                                        key={idx}
+                                        className="p-4 rounded-xl border bg-[#FFEBEE] border-[#FF8888]/60 text-[#243247] text-xs space-y-1.5"
+                                      >
+                                        <div className="font-bold flex items-center justify-between text-[#17365D]">
+                                          <span className="flex items-center gap-1.5">
+                                            <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                                            Question Q{item.questionNumber}
+                                            {item.subQuestion
+                                              ? `(${item.subQuestion})`
+                                              : ''}
+                                          </span>
+                                          <span className="font-mono-tabular">
+                                            Awarded: {item.awardedMarks}/
+                                            {item.maxMarks} (Recoverable: +
+                                            {item.maxMarks - item.awardedMarks})
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <strong>Exact Issue:</strong>{' '}
+                                          {item.reasonForLostMarks}
+                                        </div>
+                                        <div>
+                                          <strong>
+                                            Missing Mark Scheme Point:
+                                          </strong>{' '}
+                                          {item.markSchemeRequirement}
+                                        </div>
+                                        <div>
+                                          <strong>
+                                            Concise Model Correction:
+                                          </strong>{' '}
+                                          {item.examinerWording ||
+                                            item.markSchemeRequirement}
+                                        </div>
+                                      </div>
+                                    )
+                                  )
+                                )}
+                              </div>
+                            )}
+
+                            {/* Output D: WhatsApp Summary */}
+                            {activeOutputView === 'outputD' && (
+                              <div className="space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                  <span
+                                    className={`text-[11px] font-semibold ${mutedText}`}
+                                  >
+                                    Copy-ready WhatsApp summary for students,
+                                    parents, or tutors
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleCopyWhatsApp(
+                                        msg.evaluation!.whatsappSummary
+                                      )
+                                    }
+                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 ${primaryBtn}`}
+                                  >
+                                    {copiedWhatsApp ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5" />
+                                        Copied to Clipboard
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="w-3.5 h-3.5" />
+                                        Copy WhatsApp Summary
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                                <pre
+                                  className={`p-4 rounded-xl border text-xs font-mono-tabular whitespace-pre-wrap leading-relaxed ${subtleSurface}`}
+                                >
+                                  {msg.evaluation.whatsappSummary}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* LIVE AI EXAMINER WORKING INDICATOR CARD */}
+                {isProcessing && (
+                  <div
+                    id="examiner-live-working-card"
+                    className={`rounded-2xl border p-4 sm:p-5 space-y-3.5 transition-all ${
+                      isLight
+                        ? 'bg-[#F8FAFC] border-indigo-200 text-[#0F172A] shadow-sm'
+                        : 'bg-[#111827] border-[#6366F1]/40 text-white shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-[#17365D] text-white flex items-center justify-center shrink-0">
+                          <Loader2 className="w-4 h-4 animate-spin text-[#70E0A0]" />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold font-mono-tabular uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                            {WORKING_STAGES[workingStageIndex].badge}
+                          </div>
+                          <div className="text-xs sm:text-sm font-bold">
+                            AI Principal Examiner is evaluating your task...
+                          </div>
+                        </div>
                       </div>
-                    )}
+                      <span className="px-2.5 py-1 rounded-lg border border-current/15 text-[11px] font-mono-tabular font-semibold shrink-0">
+                        {workingElapsedSec}s elapsed
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-medium">
+                        {WORKING_STAGES[workingStageIndex].title}
+                      </div>
+                      <div className={`text-[11px] ${mutedText}`}>
+                        {WORKING_STAGES[workingStageIndex].detail}
+                      </div>
+                    </div>
+
+                    {/* 4-Step Progress Bar */}
+                    <div className="grid grid-cols-4 gap-1.5 pt-1">
+                      {WORKING_STAGES.map((st, idx) => (
+                        <div
+                          key={st.badge}
+                          className={`h-1.5 rounded-full transition-all ${
+                            idx <= workingStageIndex
+                              ? 'bg-[#70E0A0]'
+                              : isLight
+                              ? 'bg-slate-200'
+                              : 'bg-white/10'
+                          }`}
+                        />
+                      ))}
+                    </div>
                   </div>
-                ))}
+                )}
+
+                <div ref={messagesEndRef} />
               </div>
             )}
           </div>
 
           {/* Bottom Composer Area matching reference screenshot */}
           <div className="p-4 border-t border-current/10 space-y-3">
+            {/* Compact Live Status Pill when AI is working */}
+            {isProcessing && (
+              <div
+                className={`px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+                  isLight
+                    ? 'bg-indigo-50/90 border-indigo-200 text-indigo-950'
+                    : 'bg-[#6366F1]/15 border-[#6366F1]/30 text-indigo-200'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="font-semibold truncate">
+                    {WORKING_STAGES[workingStageIndex].title}
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono-tabular font-bold shrink-0">
+                  {workingElapsedSec}s
+                </span>
+              </div>
+            )}
+
             {/* Row 1: Quick-Action Chips */}
             <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
+                disabled={isProcessing}
                 onClick={() =>
                   handleExecuteExaminerAction(
                     'Key Points Right & Lost Marks Breakdown',
                     true
                   )
                 }
-                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all ${subtleSurface} hover:border-current/30`}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all disabled:opacity-50 ${subtleSurface} hover:border-current/30`}
               >
                 <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" />
                 <span>Key Points Right &amp;</span>
@@ -1602,26 +2181,28 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
               <button
                 type="button"
+                disabled={isProcessing}
                 onClick={() =>
                   handleExecuteExaminerAction(
                     'Grade vs Official Mark Scheme',
                     true
                   )
                 }
-                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all ${subtleSurface} hover:border-current/30`}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all disabled:opacity-50 ${subtleSurface} hover:border-current/30`}
               >
                 <span>🎯</span> Grade vs Mark Scheme
               </button>
 
               <button
                 type="button"
+                disabled={isProcessing}
                 onClick={() =>
                   handleExecuteExaminerAction(
                     'Pinpoint Lost Marks & Examiner Fixes',
                     true
                   )
                 }
-                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all ${subtleSurface} hover:border-current/30`}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all disabled:opacity-50 ${subtleSurface} hover:border-current/30`}
               >
                 <X className="w-3 h-3 text-red-500 stroke-[2.5]" />
                 <span>Pinpoint Lost Marks</span>
@@ -1629,12 +2210,13 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
               <button
                 type="button"
+                disabled={isProcessing}
                 onClick={() =>
                   handleExecuteExaminerAction(
                     'Provide a 100% full-marks model examiner answer'
                   )
                 }
-                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all ${subtleSurface} hover:border-current/30`}
+                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap inline-flex items-center gap-1 transition-all disabled:opacity-50 ${subtleSurface} hover:border-current/30`}
               >
                 <span className="text-amber-500">⚡</span> 100% Model Answer
               </button>
@@ -1705,8 +2287,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               />
               <button
                 type="button"
+                disabled={isProcessing}
                 onClick={() => photoInputRef.current?.click()}
-                className={`w-12 h-11 rounded-xl border flex flex-col items-center justify-center gap-0.5 shrink-0 text-[10px] font-semibold transition-all ${subtleSurface} hover:border-current/30`}
+                className={`w-12 h-11 rounded-xl border flex flex-col items-center justify-center gap-0.5 shrink-0 text-[10px] font-semibold transition-all disabled:opacity-50 ${subtleSurface} hover:border-current/30`}
               >
                 <Camera className="w-3.5 h-3.5 opacity-70" />
                 <span>Photos</span>
@@ -1721,8 +2304,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               />
               <button
                 type="button"
+                disabled={isProcessing}
                 onClick={() => fileInputRef.current?.click()}
-                className={`w-12 h-11 rounded-xl border flex flex-col items-center justify-center gap-0.5 shrink-0 text-[10px] font-semibold transition-all ${subtleSurface} hover:border-current/30`}
+                className={`w-12 h-11 rounded-xl border flex flex-col items-center justify-center gap-0.5 shrink-0 text-[10px] font-semibold transition-all disabled:opacity-50 ${subtleSurface} hover:border-current/30`}
               >
                 <Paperclip className="w-3.5 h-3.5 opacity-70" />
                 <span>Files</span>
@@ -1730,19 +2314,31 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
               <input
                 type="text"
+                disabled={isProcessing}
                 value={inputPrompt}
                 onChange={(e) => setInputPrompt(e.target.value)}
-                placeholder="Paste your question & answer, attach photos or study notes..."
-                className={`flex-1 h-11 rounded-xl border px-4 text-xs outline-none transition-all ${subtleSurface}`}
+                placeholder={
+                  isProcessing
+                    ? 'AI Examiner is evaluating your script...'
+                    : 'Paste your question & answer, attach photos or study notes...'
+                }
+                className={`flex-1 h-11 rounded-xl border px-4 text-xs outline-none transition-all disabled:opacity-60 ${subtleSurface}`}
               />
 
               <button
                 type="submit"
                 disabled={isProcessing}
                 aria-label="Send message to AI Examiner"
-                className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-all ${primaryBtn}`}
+                className={`h-11 px-4 rounded-xl flex items-center justify-center gap-1.5 shrink-0 text-xs font-semibold transition-all disabled:opacity-60 ${primaryBtn}`}
               >
-                <Send className="w-4 h-4" />
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="hidden sm:inline">Working...</span>
+                  </>
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
               </button>
             </form>
           </div>

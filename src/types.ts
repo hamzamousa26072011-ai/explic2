@@ -27,16 +27,43 @@ export type QualificationLevel =
   | 'AS-Level'
   | 'A-Level';
 
+export interface ExaminerAnnotatedLine {
+  text: string;
+  isCorrect: boolean;
+  pageNumber?: number;
+  yRatio?: number;
+}
+
+export interface RedCrossCorrectionItem {
+  quotedError: string;
+  explanation: string;
+  modelCorrection: string;
+  higherRangeAlternative?: string;
+}
+
 export interface QuestionMarkLedgerItem {
   questionNumber: string;
   subQuestion?: string;
+  taskTitle?: string;
   maxMarks: number;
   awardedMarks: number;
+  contentAwarded?: number;
+  contentMax?: number;
+  languageAwarded?: number;
+  languageMax?: number;
+  levelAwarded?: string;
+  wordCountWrote?: number;
+  wordCountRequired?: string;
+  wordCountPosition?: string;
   markingPointRationale: string;
   studentEvidence: string;
   reasonForLostMarks?: string;
   markSchemeRequirement: string;
   examinerWording?: string;
+  whatEarnedTicks?: string[];
+  redCrossCorrections?: RedCrossCorrectionItem[];
+  annotatedLines?: ExaminerAnnotatedLine[];
+  examinerComment?: string;
   confidence: 'High' | 'Moderate' | 'Ambiguous - Flagged';
   status: 'correct' | 'partial' | 'incorrect';
   highlightColor: '#70E0A0' | '#FFD580' | '#FF8888';
@@ -82,6 +109,13 @@ export interface ExaminerEvaluationResult {
   annotatedPdfBase64?: string;
   ocrTranscription?: string;
   extractedMarkScheme?: string;
+  examinerOverview?: string;
+  wordLimitDisciplineNote?: string;
+  overallFeedbackWholeScript?: string;
+  strengthsToProtect?: string[];
+  whereMarksWent?: string[];
+  nextFourTargets?: string[];
+  projectedScoreWithFixes?: string;
 }
 
 export interface StudyTask {

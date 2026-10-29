@@ -1,9 +1,8 @@
 import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { generateAnnotatedExaminerPdfBytes } from './src/utils/examinerPdfAnnotator.ts';
 
 dotenv.config();
 
@@ -23,16 +22,43 @@ export type QualificationLevel =
   | 'AS-Level'
   | 'A-Level';
 
+export interface ExaminerAnnotatedLine {
+  text: string;
+  isCorrect: boolean;
+  pageNumber?: number;
+  yRatio?: number;
+}
+
+export interface RedCrossCorrectionItem {
+  quotedError: string;
+  explanation: string;
+  modelCorrection: string;
+  higherRangeAlternative?: string;
+}
+
 export interface QuestionMarkLedgerItem {
   questionNumber: string;
   subQuestion?: string;
+  taskTitle?: string;
   maxMarks: number;
   awardedMarks: number;
+  contentAwarded?: number;
+  contentMax?: number;
+  languageAwarded?: number;
+  languageMax?: number;
+  levelAwarded?: string;
+  wordCountWrote?: number;
+  wordCountRequired?: string;
+  wordCountPosition?: string;
   markingPointRationale: string;
   studentEvidence: string;
   reasonForLostMarks?: string;
   markSchemeRequirement: string;
   examinerWording?: string;
+  whatEarnedTicks?: string[];
+  redCrossCorrections?: RedCrossCorrectionItem[];
+  annotatedLines?: ExaminerAnnotatedLine[];
+  examinerComment?: string;
   confidence: 'High' | 'Moderate' | 'Ambiguous - Flagged';
   status: 'correct' | 'partial' | 'incorrect';
   highlightColor: '#70E0A0' | '#FFD580' | '#FF8888';
@@ -78,6 +104,13 @@ export interface ExaminerEvaluationResult {
   annotatedPdfBase64?: string;
   ocrTranscription?: string;
   extractedMarkScheme?: string;
+  examinerOverview?: string;
+  wordLimitDisciplineNote?: string;
+  overallFeedbackWholeScript?: string;
+  strengthsToProtect?: string[];
+  whereMarksWent?: string[];
+  nextFourTargets?: string[];
+  projectedScoreWithFixes?: string;
 }
 
 export interface SecurityThreatIncident {
@@ -478,114 +511,7 @@ function buildVoiceDailyPlanFromText(
   };
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const clean = hex.replace('#', '');
-  const num = parseInt(clean, 16);
-  return {
-    r: ((num >> 16) & 255) / 255,
-    g: ((num >> 8) & 255) / 255,
-    b: (num & 255) / 255,
-  };
-}
 
-function sanitizePdfAscii(text: string): string {
-  return (text || '')
-    .replace(/✓/g, '/')
-    .replace(/✗/g, 'X')
-    .replace(/[—–]/g, '-')
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/²/g, '^2')
-    .replace(/³/g, '^3')
-    .replace(/[^\x20-\x7E]/g, '');
-}
-
-async function generateAnnotatedExaminerPdfBytes(
-  evaluation: ExaminerEvaluationResult,
-  existingPdfBytes?: Uint8Array | null
-): Promise<Uint8Array> {
-  let pdfDoc: PDFDocument;
-  if (existingPdfBytes && existingPdfBytes.byteLength > 100) {
-    try {
-      pdfDoc = await PDFDocument.load(existingPdfBytes);
-    } catch {
-      pdfDoc = await PDFDocument.create();
-    }
-  } else {
-    pdfDoc = await PDFDocument.create();
-  }
-
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontExaminer = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
-
-  const PAGE_W = 595.28;
-  const PAGE_H = 841.89;
-
-  if (pdfDoc.getPageCount() === 0) {
-    pdfDoc.addPage([PAGE_W, PAGE_H]);
-  }
-
-  const navyText = hexToRgb('#243247');
-  const scoreBadgeColor = hexToRgb('#17365D');
-  const firstPage = pdfDoc.getPage(0);
-  const { width: p1W, height: p1H } = firstPage.getSize();
-
-  firstPage.drawText(
-    sanitizePdfAscii(`EXPLIC EXAMINER MODERATION SCRIPT - ${evaluation.board}`),
-    {
-      x: 24,
-      y: p1H - 32,
-      size: 10,
-      font: fontBold,
-      color: rgb(navyText.r, navyText.g, navyText.b),
-    }
-  );
-  firstPage.drawText(
-    sanitizePdfAscii(
-      `${evaluation.subject} | ${evaluation.paperComponent} | Session: ${evaluation.session}`
-    ),
-    {
-      x: 24,
-      y: p1H - 46,
-      size: 8.5,
-      font: fontRegular,
-      color: rgb(navyText.r, navyText.g, navyText.b),
-    }
-  );
-
-  firstPage.drawRectangle({
-    x: p1W - 235,
-    y: p1H - 68,
-    width: 205,
-    height: 46,
-    color: rgb(scoreBadgeColor.r, scoreBadgeColor.g, scoreBadgeColor.b),
-  });
-  firstPage.drawText(
-    sanitizePdfAscii(
-      `SCORE: ${evaluation.totalAwarded}/${evaluation.totalAvailable} (${evaluation.percentage}%)`
-    ),
-    {
-      x: p1W - 223,
-      y: p1H - 42,
-      size: 12,
-      font: fontBold,
-      color: rgb(1, 1, 1),
-    }
-  );
-  firstPage.drawText(
-    sanitizePdfAscii(`PROVISIONAL GRADE: ${evaluation.provisionalGrade}`),
-    {
-      x: p1W - 223,
-      y: p1H - 58,
-      size: 9,
-      font: fontRegular,
-      color: rgb(0.88, 0.94, 1),
-    }
-  );
-
-  return await pdfDoc.save();
-}
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -597,24 +523,45 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 const workspaceMemoryStore = new Map<string, { payload: unknown; updatedAt: string }>();
 const securityThreatLogs: SecurityThreatIncident[] = [];
 
-const PRINCIPAL_EXAMINER_SYSTEM_PROMPT = `You are an expert Principal Examiner, Senior Moderator, and Assessment Specialist covering Cambridge CAIE, Pearson Edexcel, and Oxford AQA across IGCSE, GCSE, O-Level, and AS/A-Level subjects.
-Your task is to evaluate a student's completed examination paper against the supplied Question Paper (QP) and Mark Scheme (MS), apply board-specific marking rules, and produce a structured question-by-question mark ledger through THREE INDEPENDENT EVALUATION PASSES:
-- Pass 1 (Independent Marking): Mark every question from scratch against the supplied mark scheme, allocating Method (M), Accuracy (A), and Independent (B) points separately.
-- Pass 2 (Independent Verification): Reassess independently checking Error Carried Forward (ECF), consequential errors, valid alternative approaches, equivalent terminology, and units.
-- Pass 3 (Board-Specific Moderation): Apply official board conventions (dependent marks, significant figures, list rules, spelling rules, and ensure no double credit or double penalization).
-- Consensus & Final Mark Lock: Resolve any discrepancy across the three passes and lock the final score equal to the sum of question-level awarded marks.
+const PRINCIPAL_EXAMINER_SYSTEM_PROMPT = `You are an expert Principal Examiner, Senior Moderator, and Assessment Specialist covering Cambridge CAIE, Pearson Edexcel, and Oxford AQA across IGCSE, GCSE, and O-Level subjects.
+Your task is to evaluate a student's completed examination paper against the supplied Question Paper (QP) and Mark Scheme (MS), apply board-specific marking rules, and produce a professionally annotated PDF with precise, organized examiner feedback.
+Core priorities: marking accuracy, defensible mark allocation, precise PDF alignment, readable typography, consistent visual hierarchy, zero annotation clutter, and using strictly organized ticks and crosses for markings.
 
-MANDATORY MARKING RULES & DELIVERABLES:
-1. Check the past paper strictly according to the applied mark scheme.
-2. Mark mistakes on the paper with precise evidence (student working vs mark scheme requirement).
-3. Edit/correct mistakes: provide the exact missing point, required improvement, and concise examiner wording.
-4. Give an overall mark, percentage, and defensible provisional grade based on official 2026 threshold calibrations.
-5. Take your time to ensure utmost accuracy and defensible mark allocation.
+SOURCE VERIFICATION & DOCUMENT EXTRACTION
+Before marking:
+- Identify the examination board, subject, syllabus/specification code, paper number, component, variant, examination session, and maximum available marks.
+- Examine all supplied files: Question Paper, Mark Scheme, and student's completed submission.
+- Determine the page dimensions, orientation, page count, rotation, coordinate system, and scan quality of the student's PDF.
+- Extract printed text, handwritten responses, equations, diagrams, tables, units, numerical substitutions, and working using multiple complementary OCR and visual-inspection passes.
+- Reinspect ambiguous handwriting, symbols, superscripts, subscripts, fractions, decimal points, signs, chemical equations, and diagram labels against the original page image.
+- Preserve the original question numbering and page sequence.
+- Never claim that OCR is perfect or that an independent verification was performed if it was not. Flag illegible or ambiguous content and request clarification when it materially affects marking.
 
-For lost-marks feedback callouts, always provide:
-1. Issue: What the student omitted, misstated, or calculated incorrectly.
-2. Required improvement: Specific missing mark-scheme point, formula, substitution, or unit.
-3. Examiner wording: Concise model formulation that earns the mark.`;
+THREE-PASS INDEPENDENT MARKING
+Perform three distinct evaluation passes:
+- Pass 1 — Independent marking: Mark every question from scratch against the supplied mark scheme. Identify the student's intended answer and relevant working. Allocate each available mark separately using the applicable marking points. Record acceptable alternative answers and valid methods.
+- Pass 2 — Independent verification: Reassess the paper independently rather than merely copying Pass 1. Check method marks, accuracy marks, follow-through marks, consequential errors, alternative approaches, equivalent terminology, and valid units. Identify any over-penalization or under-penalization.
+- Pass 3 — Board-specific moderation: Apply the relevant official examination-board marking conventions. Check dependent marks, error-carried-forward rules, significant figures, units, list rules, spelling requirements, levels-based marking, assessment objectives, and paper-specific instructions where applicable. Check that the marking does not award the same credit twice.
+- Consensus and final mark lock: Create an internal comparison of all three passes. Resolve every disagreement using the supplied mark scheme and applicable official guidance. If a discrepancy cannot be resolved confidently, flag it rather than inventing certainty.
+
+Maintain a question-by-question mark ledger containing:
+- Question and subquestion
+- Maximum marks
+- Awarded marks
+- Marking-point rationale
+- Evidence from the student's answer
+- Reason for every lost mark
+- Applicable mark scheme requirement
+- Examiner wording (concise model formulation that earns full marks)
+- Confidence or unresolved ambiguity, if relevant
+The final score must equal the sum of the locked question-level marks.
+
+PROFESSIONAL ANNOTATION & OUTPUT STANDARDS
+- Visual Design Palette: Correct response #70E0A0 (Soft green highlight), Incorrect response #FF8888 (Soft red highlight), Partially correct #FFD580 (Soft amber highlight), Examiner text #243247 (Dark navy typography), Feedback boxes #FFEBEE (Pale pink background), Neutral separators #D8DEE8, Score badge #17365D (Navy background with white text).
+- Organized Examiner Symbols: Use ONLY ✓ (Checkmark for awarded mark) and ✗ (Cross for lost mark) aligned in a clean vertical column in the right annotation lane. Do NOT write B1, M1, A1, or C1 inline on the script page itself.
+- Question Subtotals: Place a clean subtotal badge (e.g., 3/3, 2/3, 0/2) in the left margin aligned with the question start.
+- Lost-Marks Callout Boxes (#FFEBEE): Include ONLY when marks are lost, stating: (1) Issue, (2) Required improvement, (3) Examiner wording, and (4) Marks lost (-1, -2, etc.).
+- Official 2026 Grade Boundaries: Distinguish clearly between raw percentage and provisional grade estimate (9-1 or A*-G / A*-E).`;
 
 function extractReadableTextFromPdfBase64(base64Data: string): string {
   try {
@@ -1134,26 +1081,37 @@ app.post('/api/scholar/chat', async (req, res) => {
 
     const examinerJsonSystemPrompt =
       PRINCIPAL_EXAMINER_SYSTEM_PROMPT +
-      `\n\nCRITICAL OCR & MARK SCHEME COMPARISON INSTRUCTIONS:
-1. Inspect ONLY the actual attached documents / student text supplied in this request. NEVER invent unrelated sample questions (such as a=v-u/t kinematics) if the attached documents are about a different topic or paper!
-2. Identify the actual examination board, subject, syllabus code, and paper component from the attached documents or filenames (for example, "0625_w25_ms_62.pdf" is Cambridge CAIE IGCSE Physics 0625 Paper 6 Variant 2 Oct/Nov 2025) and return them in "detectedBoard", "detectedSubject", and "detectedPaperComponent".
-3. Perform high-precision Visual & Handwriting OCR across all pages of the Student Script document(s)/image(s). Extract every handwritten answer, equation, table entry, graph work, and sentence verbatim into "ocrTranscription", organized by question number.
-4. Extract the official Mark Scheme criteria for each corresponding question from the attached Mark Scheme document(s) into "extractedMarkScheme".
-5. Compare the student's "ocrTranscription" directly against "extractedMarkScheme" question by question across 3 independent passes. Allocate exact awardedMarks vs maxMarks for every question/sub-question present in the student script.
-6. Return valid JSON with keys:
-- "detectedBoard" (string, e.g. "Cambridge CAIE", "Pearson Edexcel", "Oxford AQA")
-- "detectedSubject" (string, e.g. "Physics", "Chemistry", "Mathematics", "Biology")
-- "detectedPaperComponent" (string, e.g. "0625/62 Paper 6 Alternative to Practical")
-- "ocrTranscription" (string: verbatim OCR transcript of the student's actual script across all questions)
-- "extractedMarkScheme" (string: structured mark scheme points extracted from the mark scheme document)
-- "pass1Summary" (string)
-- "pass2Verification" (string)
-- "pass3Moderation" (string)
-- "consensusNotes" (string)
-- "priorityRevisionTopics" (array of strings)
-- "ledger" (array of objects with questionNumber, subQuestion, maxMarks, awardedMarks, markingPointRationale, studentEvidence, reasonForLostMarks, markSchemeRequirement, examinerWording).`;
+      `\n\nCRITICAL MULTI-PAGE MARKED SCRIPT & EXAMINER REPORT INSTRUCTIONS (TAKE ALL THE TIME NEEDED FOR MAXIMUM ACCURACY):
+1. Inspect ONLY the actual attached documents / student text supplied in this request. NEVER invent unrelated sample questions!
+2. Identify the actual examination board, subject, syllabus code, and paper component from the attached documents or filenames and return them in "detectedBoard", "detectedSubject", and "detectedPaperComponent".
+3. Perform exhaustive, unhurried Visual & Handwriting OCR across every single page of the Student Script document(s)/image(s). Extract every handwritten line, equation, table entry, crossed-out phrase, and sentence verbatim into "ocrTranscription", organized by question number.
+4. Extract the official Mark Scheme criteria / band descriptors for each corresponding question from the attached Mark Scheme document(s) into "extractedMarkScheme".
+5. For EVERY question in "ledger", provide:
+   - "questionNumber" (e.g. "1", "2", "3", "4") and optional "subQuestion"
+   - "taskTitle" (e.g. "Describe a photograph", "Letter to a teacher", "Blog about a sport", "Persuasive article", or the specific science/math topic)
+   - "maxMarks" and "awardedMarks"
+   - "contentAwarded", "contentMax", "languageAwarded", "languageMax" (if applicable, e.g. Content & Communication vs Language, or Method vs Accuracy)
+   - "levelAwarded" (e.g. "C&C Band 3 · Lang Band 2" or "Full Method & Accuracy")
+   - "wordCountWrote" (integer word count of the student's response for this question), "wordCountRequired" (e.g. "30-50 words"), "wordCountPosition" (e.g. "+34% over" or "Within target")
+   - "studentEvidence" (the full verbatim text / working the student wrote for this question)
+   - "annotatedLines": array of { "text": string, "isCorrect": boolean, "pageNumber": integer } splitting the student's response line-by-line or clause-by-clause, marking "isCorrect": true for lines that earn a green highlight & green tick (✓) and "isCorrect": false for lines with a grammar/lexical/factual/calculation slip that receive a red/pink highlight & red cross (✗)
+   - "whatEarnedTicks": array of detailed strings explaining each specific strength or mark-scheme point that earned green ticks (✓), quoting the student's actual words/working
+   - "redCrossCorrections": array of objects for EVERY red cross (✗) in this question, each with:
+       * "quotedError": the exact quote from the student's script containing the slip/error
+       * "explanation": clear grammatical, lexical, or technical explanation of why it is wrong
+       * "modelCorrection": the direct corrected sentence/working (prefixed conceptually with »)
+       * "higherRangeAlternative": an elevated Band 5 / full-mark alternative phrasing or examiner tip
+   - "examinerComment": a concise closing paragraph on this question (e.g. "Examiner comment on Q1: ...")
+6. Also provide whole-script synthesis fields:
+   - "examinerOverview": comprehensive paragraph for the "| Examiner's overview" section
+   - "wordLimitDisciplineNote": paragraph analyzing length/precision discipline across the paper
+   - "overallFeedbackWholeScript": synthesis paragraph for the final "| Overall feedback · whole script" page
+   - "strengthsToProtect": array of 3-4 key strengths across the whole script (marked with ✓)
+   - "whereMarksWent": array of categorized error patterns across the script (marked with ✗)
+   - "nextFourTargets": array of 4 concrete, actionable exam targets for the student
+   - "projectedScoreWithFixes": paragraph stating what the exact same script would score once those four fixes are applied.`;
 
-    const examinerUserPrompt = `Perform verbatim OCR transcription on the student's submitted script, extract the Mark Scheme from the supplied Mark Scheme document, and evaluate every question using the 3-Pass Independent Marking Protocol.
+    const examinerUserPrompt = `Perform exhaustive, unhurried verbatim OCR transcription on the student's submitted script, extract the Mark Scheme from the supplied Mark Scheme document, and evaluate every question using the 3-Pass Independent Marking Protocol to produce the full Marked Script & Examiner Report.
 Requested Board: ${board}
 Requested Qualification: ${qualification}
 Requested Subject: ${subject}
@@ -1166,7 +1124,7 @@ ${userPrompt ? `User Instruction: ${userPrompt}\n` : ''}
 ${combinedQuestionPaper ? `\nQuestion Paper Text:\n${combinedQuestionPaper}\n` : ''}
 ${combinedMarkScheme ? `\nMark Scheme Text:\n${combinedMarkScheme}\n` : ''}
 ${combinedStudentSubmission ? `\nStudent Submission Text:\n${combinedStudentSubmission}\n` : ''}
-Take your time to read every page of the attached PDF(s)/image(s) carefully and ensure 100% faithful OCR transcription and mark allocation.`;
+Take all the time needed to read every page of the attached PDF(s)/image(s) carefully and ensure 100% faithful line-by-line OCR transcription, green-tick analysis, red-cross corrections, and mark allocation.`;
 
     geminiParts.push({
       text: examinerUserPrompt,
@@ -1178,9 +1136,12 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
       !subject || subject === 'Auto-Detect Subject' ? 'Physics' : subject;
     let resolvedPaperComponent = paperComponent || 'Examination Paper';
 
-    // Infer from filenames like 0625_w25_ms_62.pdf if present
+    // Infer from filenames like 0625_w25_ms_62.pdf or 9280 if present
     const allFileNames = normalizedFiles.map((f) => f.name).join(' ');
-    if (/0625|9702|5054/i.test(allFileNames)) {
+    if (/9280|aqa|oxford/i.test(allFileNames)) {
+      resolvedBoard = 'Oxford AQA';
+      resolvedSubject = 'English as a Second Language';
+    } else if (/0625|9702|5054/i.test(allFileNames)) {
       resolvedBoard = 'Cambridge CAIE';
       resolvedSubject = 'Physics';
     } else if (/0620|9701|5070/i.test(allFileNames)) {
@@ -1198,7 +1159,7 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
     let modelUsedName = 'gemini-3.1-flash-lite';
 
     if (ai) {
-      // Attempt 1: gemini-3.1-flash-lite with structured responseSchema (90s timeout for multi-page PDFs)
+      // Attempt 1: gemini-3.1-flash-lite with structured responseSchema (180s timeout for deep multi-page accuracy)
       try {
         const response = await withScholarTimeout(
           ai.models.generateContent({
@@ -1220,6 +1181,22 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
                   pass2Verification: { type: Type.STRING },
                   pass3Moderation: { type: Type.STRING },
                   consensusNotes: { type: Type.STRING },
+                  examinerOverview: { type: Type.STRING },
+                  wordLimitDisciplineNote: { type: Type.STRING },
+                  overallFeedbackWholeScript: { type: Type.STRING },
+                  strengthsToProtect: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  whereMarksWent: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  nextFourTargets: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  projectedScoreWithFixes: { type: Type.STRING },
                   priorityRevisionTopics: {
                     type: Type.ARRAY,
                     items: { type: Type.STRING },
@@ -1231,13 +1208,57 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
                       properties: {
                         questionNumber: { type: Type.STRING },
                         subQuestion: { type: Type.STRING },
+                        taskTitle: { type: Type.STRING },
                         maxMarks: { type: Type.INTEGER },
                         awardedMarks: { type: Type.INTEGER },
+                        contentAwarded: { type: Type.INTEGER },
+                        contentMax: { type: Type.INTEGER },
+                        languageAwarded: { type: Type.INTEGER },
+                        languageMax: { type: Type.INTEGER },
+                        levelAwarded: { type: Type.STRING },
+                        wordCountWrote: { type: Type.INTEGER },
+                        wordCountRequired: { type: Type.STRING },
+                        wordCountPosition: { type: Type.STRING },
+                        pageNumber: { type: Type.INTEGER },
                         markingPointRationale: { type: Type.STRING },
                         studentEvidence: { type: Type.STRING },
                         reasonForLostMarks: { type: Type.STRING },
                         markSchemeRequirement: { type: Type.STRING },
                         examinerWording: { type: Type.STRING },
+                        examinerComment: { type: Type.STRING },
+                        whatEarnedTicks: {
+                          type: Type.ARRAY,
+                          items: { type: Type.STRING },
+                        },
+                        annotatedLines: {
+                          type: Type.ARRAY,
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              text: { type: Type.STRING },
+                              isCorrect: { type: Type.BOOLEAN },
+                              pageNumber: { type: Type.INTEGER },
+                            },
+                            required: ['text', 'isCorrect'],
+                          },
+                        },
+                        redCrossCorrections: {
+                          type: Type.ARRAY,
+                          items: {
+                            type: Type.OBJECT,
+                            properties: {
+                              quotedError: { type: Type.STRING },
+                              explanation: { type: Type.STRING },
+                              modelCorrection: { type: Type.STRING },
+                              higherRangeAlternative: { type: Type.STRING },
+                            },
+                            required: [
+                              'quotedError',
+                              'explanation',
+                              'modelCorrection',
+                            ],
+                          },
+                        },
                       },
                       required: [
                         'questionNumber',
@@ -1258,7 +1279,7 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
               },
             },
           }),
-          90000
+          180000
         );
 
         if (response.text) {
@@ -1270,7 +1291,7 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
           );
         }
       } catch {
-        // Attempt 2: Retry gemini-3.1-flash-lite with flexible JSON mode (without strict schema validation) in case of large complex PDFs
+        // Attempt 2: Retry gemini-3.1-flash-lite with flexible JSON mode
         try {
           const fallbackResp = await withScholarTimeout(
             ai.models.generateContent({
@@ -1282,7 +1303,7 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
                 responseMimeType: 'application/json',
               },
             }),
-            90000
+            180000
           );
           if (fallbackResp.text) {
             parsedGemini = JSON.parse(
@@ -1305,7 +1326,7 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
                   responseMimeType: 'application/json',
                 },
               }),
-              60000
+              150000
             );
             if (flashResp.text) {
               modelUsedName = 'gemini-3.8-flash';
@@ -1326,7 +1347,6 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
       !Array.isArray(parsedGemini.ledger) ||
       parsedGemini.ledger.length === 0
     ) {
-      // Only if no files were uploaded and a direct simple test string was sent, use fallback; otherwise return clear error
       if (normalizedFiles.length > 0) {
         return res.status(502).json({
           error:
@@ -1407,8 +1427,38 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
           return {
             questionNumber: String(item.questionNumber || idx + 1),
             subQuestion: item.subQuestion ? String(item.subQuestion) : undefined,
+            taskTitle: item.taskTitle ? String(item.taskTitle) : undefined,
             maxMarks: maxM,
             awardedMarks: awdM,
+            contentAwarded:
+              item.contentAwarded !== undefined
+                ? Number(item.contentAwarded)
+                : undefined,
+            contentMax:
+              item.contentMax !== undefined
+                ? Number(item.contentMax)
+                : undefined,
+            languageAwarded:
+              item.languageAwarded !== undefined
+                ? Number(item.languageAwarded)
+                : undefined,
+            languageMax:
+              item.languageMax !== undefined
+                ? Number(item.languageMax)
+                : undefined,
+            levelAwarded: item.levelAwarded
+              ? String(item.levelAwarded)
+              : undefined,
+            wordCountWrote:
+              item.wordCountWrote !== undefined
+                ? Number(item.wordCountWrote)
+                : undefined,
+            wordCountRequired: item.wordCountRequired
+              ? String(item.wordCountRequired)
+              : undefined,
+            wordCountPosition: item.wordCountPosition
+              ? String(item.wordCountPosition)
+              : undefined,
             markingPointRationale: String(item.markingPointRationale || ''),
             studentEvidence: String(item.studentEvidence || ''),
             reasonForLostMarks: item.reasonForLostMarks
@@ -1420,11 +1470,36 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
             examinerWording: item.examinerWording
               ? String(item.examinerWording)
               : String(item.markSchemeRequirement || ''),
+            whatEarnedTicks: Array.isArray(item.whatEarnedTicks)
+              ? item.whatEarnedTicks.map((t: any) => String(t))
+              : undefined,
+            redCrossCorrections: Array.isArray(item.redCrossCorrections)
+              ? item.redCrossCorrections.map((c: any) => ({
+                  quotedError: String(c.quotedError || ''),
+                  explanation: String(c.explanation || ''),
+                  modelCorrection: String(c.modelCorrection || ''),
+                  higherRangeAlternative: c.higherRangeAlternative
+                    ? String(c.higherRangeAlternative)
+                    : undefined,
+                }))
+              : undefined,
+            annotatedLines: Array.isArray(item.annotatedLines)
+              ? item.annotatedLines.map((l: any) => ({
+                  text: String(l.text || ''),
+                  isCorrect: Boolean(l.isCorrect),
+                  pageNumber: l.pageNumber ? Number(l.pageNumber) : undefined,
+                }))
+              : undefined,
+            examinerComment: item.examinerComment
+              ? String(item.examinerComment)
+              : undefined,
             confidence: 'High',
             status,
             highlightColor,
             yAnchorRatio: Math.min(0.84, 0.18 + (idx % 4) * 0.2),
-            pageNumber: Math.floor(idx / 4) + 1,
+            pageNumber: item.pageNumber
+              ? Number(item.pageNumber)
+              : Math.floor(idx / 2) + 1,
             pass1Awarded: awdM,
             pass2Awarded: awdM,
             pass3Locked: awdM,
@@ -1544,6 +1619,27 @@ Take your time to read every page of the attached PDF(s)/image(s) carefully and 
       whatsappSummary,
       ocrTranscription: ocrTranscriptionResult,
       extractedMarkScheme: extractedMarkSchemeResult,
+      examinerOverview: parsedGemini?.examinerOverview
+        ? String(parsedGemini.examinerOverview)
+        : undefined,
+      wordLimitDisciplineNote: parsedGemini?.wordLimitDisciplineNote
+        ? String(parsedGemini.wordLimitDisciplineNote)
+        : undefined,
+      overallFeedbackWholeScript: parsedGemini?.overallFeedbackWholeScript
+        ? String(parsedGemini.overallFeedbackWholeScript)
+        : undefined,
+      strengthsToProtect: Array.isArray(parsedGemini?.strengthsToProtect)
+        ? parsedGemini.strengthsToProtect.map((s: any) => String(s))
+        : undefined,
+      whereMarksWent: Array.isArray(parsedGemini?.whereMarksWent)
+        ? parsedGemini.whereMarksWent.map((s: any) => String(s))
+        : undefined,
+      nextFourTargets: Array.isArray(parsedGemini?.nextFourTargets)
+        ? parsedGemini.nextFourTargets.map((s: any) => String(s))
+        : undefined,
+      projectedScoreWithFixes: parsedGemini?.projectedScoreWithFixes
+        ? String(parsedGemini.projectedScoreWithFixes)
+        : undefined,
     };
 
     const pdfBytes = await generateAnnotatedExaminerPdfBytes(
@@ -2060,6 +2156,7 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
