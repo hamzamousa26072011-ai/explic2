@@ -173,17 +173,41 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   >('outputA');
   const [copiedWhatsApp, setCopiedWhatsApp] = useState(false);
 
-  // Forensic OCR & 3-Pass Moderation Live Audit State (/api/evaluate-script)
+  // Two-Step Forensic OCR + 3-Pass Moderation Pipeline State (/api/ocr-extract, /api/evaluate-transcript, /api/chat)
+  const [examinerMainTab, setExaminerMainTab] = useState<'correction' | 'chat'>(
+    'correction'
+  );
+  const [examinerSubTab, setExaminerSubTab] = useState<'report' | 'ocr'>(
+    'report'
+  );
   const [auditScriptFiles, setAuditScriptFiles] = useState<File[]>([]);
   const [auditSchemeFiles, setAuditSchemeFiles] = useState<File[]>([]);
   const [auditStatusText, setAuditStatusText] = useState(
-    'Ready to run 4-Stage Forensic Transcription & 3-Pass Marking.'
+    'Ready: Step 1 (Forensic OCR Transcription) ➔ Step 2 (3-Pass Mark Scheme Comparison).'
   );
   const [isAuditStreaming, setIsAuditStreaming] = useState(false);
+  const [auditOcrMarkdown, setAuditOcrMarkdown] = useState('');
   const [auditRawMarkdown, setAuditRawMarkdown] = useState('');
   const [auditRenderedHtml, setAuditRenderedHtml] = useState('');
   const [auditReportVisible, setAuditReportVisible] = useState(false);
   const [copiedRawReport, setCopiedRawReport] = useState(false);
+
+  // Normal AI Chat Tab State (/api/chat)
+  const [portalChatMessages, setPortalChatMessages] = useState<
+    Array<{ id: string; role: 'user' | 'assistant'; content: string }>
+  >([
+    {
+      id: 'welcome-msg',
+      role: 'assistant',
+      content:
+        'Hello! I am your AI Examiner & Tutor. You can chat with me about any IGCSE, O-Level, or A-Level topic, or switch to the **Paper Correction** tab to upload a script and mark scheme for full forensic OCR grading.',
+    },
+  ]);
+  const [portalChatInput, setPortalChatInput] = useState('');
+  const [isPortalChatStreaming, setIsPortalChatStreaming] = useState(false);
+  const portalChatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const SITE_KEY = 'key_ps5gnQ9rlp4xSCl6';
 
   const formatHighlights = (html: string) => {
     return html
@@ -197,7 +221,147 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       );
   };
 
-  const handleRunForensicExaminerAudit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const readSSEStream = async (
+    response: Response,
+    onTextChunk: (chunkText: string) => void
+  ) => {
+    if (!response.body) {
+      throw new Error('Streaming response body unavailable');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ')) {
+          const dataStr = trimmed.replace('data: ', '').trim();
+          if (dataStr === '[DONE]') return;
+          const parsed = JSON.parse(dataStr);
+          if (parsed.error) throw new Error(parsed.error);
+          if (parsed.text) onTextChunk(parsed.text);
+        }
+      }
+    }
+  };
+
+  // PDF-to-High-Res-Image Unpacker for 100% Handwriting OCR Fidelity
+  const unpackFilesForOCR = async (
+    fileList: File[],
+    labelPrefix: string
+  ): Promise<Array<{ blob: Blob; filename: string }>> => {
+    const unpackedBlobs: Array<{ blob: Blob; filename: string }> = [];
+    const pdfjsLib = (window as any).pdfjsLib;
+    if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    for (const file of fileList) {
+      if (file.type === 'application/pdf' && pdfjsLib) {
+        try {
+          setAuditStatusText(
+            `Opening ${file.name} and rendering pages for handwriting OCR...`
+          );
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            setAuditStatusText(
+              `Rendering ${labelPrefix} (${file.name} — Page ${pageNum} of ${pdf.numPages})...`
+            );
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 2.0 }); // 2x high-res scale for crisp handwriting
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            await page.render({ canvasContext: ctx, viewport }).promise;
+            const blob = await new Promise<Blob | null>((resolve) =>
+              canvas.toBlob(resolve, 'image/png', 0.95)
+            );
+            if (blob) {
+              unpackedBlobs.push({
+                blob,
+                filename: `${file.name.replace(/\.pdf$/i, '')}_page_${pageNum}.png`,
+              });
+            }
+          }
+        } catch {
+          // Fallback to raw PDF if PDF.js fails on a specific file
+          unpackedBlobs.push({ blob: file, filename: file.name });
+        }
+      } else {
+        unpackedBlobs.push({ blob: file, filename: file.name });
+      }
+    }
+    return unpackedBlobs;
+  };
+
+  // Step 2: Evaluate OCR Transcript against Mark Scheme (/api/evaluate-transcript)
+  const runEvaluationFromTranscript = async (transcriptOverride?: string) => {
+    const transcriptToGrade = (
+      transcriptOverride !== undefined ? transcriptOverride : auditOcrMarkdown
+    ).trim();
+    if (!transcriptToGrade) return;
+
+    setAuditRawMarkdown('');
+    setAuditRenderedHtml('');
+    setExaminerSubTab('report');
+    setIsAuditStreaming(true);
+    setAuditStatusText(
+      'Step 2/2: Comparing OCR Transcription against Mark Scheme (3-Pass Moderation)...'
+    );
+
+    try {
+      const evalRes = await fetch('/api/evaluate-transcript', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-site-key': SITE_KEY,
+        },
+        body: JSON.stringify({ ocrTranscript: transcriptToGrade }),
+      });
+
+      if (!evalRes.ok) {
+        const err = await evalRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed during transcript evaluation.');
+      }
+
+      let accReport = '';
+      await readSSEStream(evalRes, (chunkText) => {
+        accReport += chunkText;
+        setAuditRawMarkdown(accReport);
+        const rendered = String(marked.parse(accReport));
+        setAuditRenderedHtml(formatHighlights(rendered));
+      });
+
+      setAuditStatusText(
+        'Complete — Full OCR Transcription & 3-Pass Examiner Report Locked.'
+      );
+      onAwardFocusXp(80);
+    } catch (err: any) {
+      const msg = err?.message || 'Failed during transcript evaluation.';
+      setAuditStatusText('Error: ' + msg);
+      setAuditRenderedHtml(`<div class="red-highlight">Error: ${msg}</div>`);
+    } finally {
+      setIsAuditStreaming(false);
+    }
+  };
+
+  // Step 1 + Step 2 Full Pipeline Execution
+  const handleRunForensicExaminerAudit = async (
+    e: React.FormEvent<HTMLFormElement>
+  ) => {
     e.preventDefault();
     if (auditScriptFiles.length === 0 || auditSchemeFiles.length === 0) {
       setAuditStatusText(
@@ -206,77 +370,133 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       return;
     }
 
+    setAuditOcrMarkdown('');
     setAuditRawMarkdown('');
     setAuditRenderedHtml('');
     setAuditReportVisible(true);
     setIsAuditStreaming(true);
-    setAuditStatusText(
-      'Inspecting pages, running verbatim OCR, and moderating against Mark Scheme...'
-    );
-
-    const formData = new FormData();
-    auditScriptFiles.forEach((f) => formData.append('studentScript', f));
-    auditSchemeFiles.forEach((f) => formData.append('markScheme', f));
 
     try {
-      const response = await fetch('/api/evaluate-script', {
+      // 1. Open PDFs & convert every page to high-res images for OCR
+      const unpackedScripts = await unpackFilesForOCR(
+        auditScriptFiles,
+        'Student Script'
+      );
+      const unpackedSchemes = await unpackFilesForOCR(
+        auditSchemeFiles,
+        'Mark Scheme'
+      );
+
+      const ocrFormData = new FormData();
+      unpackedScripts.forEach((item) =>
+        ocrFormData.append('studentScript', item.blob, item.filename)
+      );
+      unpackedSchemes.forEach((item) =>
+        ocrFormData.append('markScheme', item.blob, item.filename)
+      );
+
+      // 2. Run Step 1: Forensic OCR & Mark Scheme Transcription
+      setExaminerSubTab('ocr');
+      setAuditStatusText(
+        'Step 1/2: Running Forensic OCR on all pages (extracting handwriting, working & mark scheme)...'
+      );
+
+      const ocrRes = await fetch('/api/ocr-extract', {
         method: 'POST',
-        headers: {
-          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
-        },
-        body: formData,
+        headers: { 'x-site-key': SITE_KEY },
+        body: ocrFormData,
       });
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to process script');
+      if (!ocrRes.ok) {
+        const err = await ocrRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed during OCR extraction.');
       }
 
-      if (!response.body) {
-        throw new Error('Streaming response body unavailable');
-      }
+      let accOcr = '';
+      await readSSEStream(ocrRes, (chunkText) => {
+        accOcr += chunkText;
+        setAuditOcrMarkdown(accOcr);
+      });
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let accumulatedMarkdown = '';
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split('\n\n');
-        buffer = events.pop() || '';
-
-        for (const line of events) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('data: ')) {
-            const dataStr = trimmed.replace('data: ', '').trim();
-            if (dataStr === '[DONE]') {
-              setAuditStatusText(
-                'Moderation Complete — 100% Verbatim Fidelity Lock.'
-              );
-              break;
-            }
-            const parsed = JSON.parse(dataStr);
-            if (parsed.error) throw new Error(parsed.error);
-            if (parsed.text) {
-              accumulatedMarkdown += parsed.text;
-              setAuditRawMarkdown(accumulatedMarkdown);
-              const rendered = String(marked.parse(accumulatedMarkdown));
-              setAuditRenderedHtml(formatHighlights(rendered));
-            }
-          }
-        }
-      }
-      onAwardFocusXp(80);
+      // 3. Automatically Run Step 2: 3-Pass Moderation comparing OCR Transcript vs. Mark Scheme
+      await runEvaluationFromTranscript(accOcr);
     } catch (err: any) {
       const msg = err?.message || 'Failed to process script';
       setAuditStatusText('Error: ' + msg);
       setAuditRenderedHtml(`<div class="red-highlight">Error: ${msg}</div>`);
-    } finally {
       setIsAuditStreaming(false);
+    }
+  };
+
+  // Normal AI Chat Tab Submission (/api/chat)
+  const handleSendPortalChat = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const userText = portalChatInput.trim();
+    if (!userText || isPortalChatStreaming) return;
+
+    if (onTriggerSecurityLockdown(userText, 'Examiner Chat')) return;
+
+    const userMsg = {
+      id: `chat-${Date.now()}-u`,
+      role: 'user' as const,
+      content: userText,
+    };
+    const aiPlaceholderId = `chat-${Date.now()}-a`;
+    const nextHistory = [...portalChatMessages, userMsg];
+
+    setPortalChatInput('');
+    setPortalChatMessages([
+      ...nextHistory,
+      { id: aiPlaceholderId, role: 'assistant', content: 'Thinking...' },
+    ]);
+    setIsPortalChatStreaming(true);
+
+    try {
+      const paperContext =
+        auditOcrMarkdown || auditRawMarkdown
+          ? `OCR TRANSCRIPT:\n${auditOcrMarkdown}\n\nMODERATION REPORT:\n${auditRawMarkdown}`
+          : '';
+
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-site-key': SITE_KEY,
+        },
+        body: JSON.stringify({
+          messages: nextHistory
+            .filter((m) => m.id !== 'welcome-msg')
+            .map((m) => ({ role: m.role, content: m.content })),
+          paperContext,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Chat request failed.');
+      }
+
+      let aiReply = '';
+      await readSSEStream(res, (chunkText) => {
+        aiReply += chunkText;
+        setPortalChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === aiPlaceholderId ? { ...m, content: aiReply } : m
+          )
+        );
+      });
+    } catch (err: any) {
+      const msg = err?.message || 'Chat request failed.';
+      setPortalChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === aiPlaceholderId ? { ...m, content: `Error: ${msg}` } : m
+        )
+      );
+    } finally {
+      setIsPortalChatStreaming(false);
+      setTimeout(() => {
+        portalChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
     }
   };
 
@@ -927,7 +1147,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         </div>
       </header>
 
-      {/* CAIE / Edexcel / OxfordAQA — Principal AI Examiner & Assessment Moderator (Forensic OCR & 3-Pass Moderation) */}
+      {/* CAIE / Edexcel / OxfordAQA — AI Principal Examiner & Assessment Portal (Forensic OCR & 3-Pass Moderation + Mini-Tabs) */}
       <section className="rounded-2xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm">
         <div className="bg-slate-900 text-white py-5 px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
@@ -935,174 +1155,428 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               Forensic OCR &amp; 3-Pass Moderation
             </span>
             <h2 className="text-xl sm:text-2xl font-bold mt-2 text-white">
-              AI Principal Examiner &amp; Assessment Moderator
+              AI Principal Examiner &amp; Assessment Portal
             </h2>
             <p className="text-slate-400 text-xs sm:text-sm mt-0.5">
               Cambridge (IGCSE / O-Level / AS &amp; A-Level) · Pearson Edexcel · OxfordAQA
             </p>
           </div>
-          {attachedFiles.length > 0 && (
-            <button
-              type="button"
-              onClick={() =>
-                handleExecuteExaminerAction(
-                  'Evaluate attached documents and generate 14-page annotated PDF report',
-                  true
-                )
-              }
-              disabled={isProcessing}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Generate 14-Page Annotated PDF Report
-            </button>
-          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Mini-Tabs Navigation Bar */}
+            <div className="flex bg-slate-800 p-1.5 rounded-xl border border-slate-700">
+              <button
+                type="button"
+                id="tabCorrectionBtn"
+                onClick={() => setExaminerMainTab('correction')}
+                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+                  examinerMainTab === 'correction'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                📄 Paper Correction
+              </button>
+              <button
+                type="button"
+                id="tabChatBtn"
+                onClick={() => setExaminerMainTab('chat')}
+                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+                  examinerMainTab === 'chat'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                💬 Normal AI Chat
+              </button>
+            </div>
+
+            {attachedFiles.length > 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleExecuteExaminerAction(
+                    'Evaluate attached documents and generate 14-page annotated PDF report',
+                    true
+                  )
+                }
+                disabled={isProcessing}
+                className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" />
+                14-Page Annotated PDF
+              </button>
+            )}
+          </div>
         </div>
 
         <div className={`p-6 ${isLight ? 'bg-white' : 'bg-[#111827]'}`}>
-          <form
-            id="examinerForm"
-            onSubmit={handleRunForensicExaminerAudit}
-            className="space-y-6"
-          >
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* 1. Student Script Upload */}
-              <div
-                className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
-                  isLight
-                    ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
-                    : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
-                }`}
+          {examinerMainTab === 'correction' ? (
+            <div id="sectionCorrection">
+              <form
+                id="examinerForm"
+                onSubmit={handleRunForensicExaminerAudit}
+                className="space-y-6"
               >
-                <label className="block cursor-pointer">
-                  <span className="text-sm font-semibold block mb-1">
-                    1. Upload Past Paper / Student Script
-                  </span>
-                  <span className={`text-xs block mb-4 ${mutedText}`}>
-                    PDF or High-Res Images (JPG/PNG) — All pages
-                  </span>
-                  <input
-                    type="file"
-                    id="studentScript"
-                    name="studentScript"
-                    multiple
-                    accept=".pdf,image/*"
-                    required={auditScriptFiles.length === 0}
-                    onChange={(e) => {
-                      const files = e.target.files
-                        ? Array.from(e.target.files)
-                        : [];
-                      setAuditScriptFiles(files);
-                      handleFileUpload(e);
-                    }}
-                    className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
-                  />
-                  {auditScriptFiles.length > 0 && (
-                    <div className="mt-2.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
-                      {auditScriptFiles.length} Past Paper / Script file(s) ready:{' '}
-                      {auditScriptFiles.map((f) => f.name).join(', ')}
-                    </div>
-                  )}
-                </label>
-              </div>
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* 1. Student Script Upload */}
+                  <div
+                    className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
+                      isLight
+                        ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
+                        : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
+                    }`}
+                  >
+                    <label className="block cursor-pointer">
+                      <span className="text-sm font-semibold block mb-1">
+                        1. Upload Past Paper / Student Script
+                      </span>
+                      <span className={`text-xs block mb-4 ${mutedText}`}>
+                        PDF or Images (JPG/PNG) — Every page &amp; handwritten note is unpacked for OCR
+                      </span>
+                      <input
+                        type="file"
+                        id="studentScript"
+                        name="studentScript"
+                        multiple
+                        accept=".pdf,image/*"
+                        required={auditScriptFiles.length === 0}
+                        onChange={(e) => {
+                          const files = e.target.files
+                            ? Array.from(e.target.files)
+                            : [];
+                          setAuditScriptFiles(files);
+                          handleFileUpload(e);
+                        }}
+                        className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                      />
+                      {auditScriptFiles.length > 0 && (
+                        <div className="mt-2.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                          {auditScriptFiles.length} Past Paper / Script file(s) ready:{' '}
+                          {auditScriptFiles.map((f) => f.name).join(', ')}
+                        </div>
+                      )}
+                    </label>
+                  </div>
 
-              {/* 2. Official Mark Scheme Upload */}
-              <div
-                className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
-                  isLight
-                    ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
-                    : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
-                }`}
-              >
-                <label className="block cursor-pointer">
-                  <span className="text-sm font-semibold block mb-1">
-                    2. Upload Official Mark Scheme
-                  </span>
-                  <span className={`text-xs block mb-4 ${mutedText}`}>
-                    PDF or High-Res Images (JPG/PNG) — Complete rubric
-                  </span>
-                  <input
-                    type="file"
-                    id="markScheme"
-                    name="markScheme"
-                    multiple
-                    accept=".pdf,image/*"
-                    required={auditSchemeFiles.length === 0}
-                    onChange={(e) => {
-                      const files = e.target.files
-                        ? Array.from(e.target.files)
-                        : [];
-                      setAuditSchemeFiles(files);
-                      handleFileUpload(e);
-                    }}
-                    className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                  />
-                  {auditSchemeFiles.length > 0 && (
-                    <div className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                      {auditSchemeFiles.length} Official Mark Scheme file(s) ready:{' '}
-                      {auditSchemeFiles.map((f) => f.name).join(', ')}
-                    </div>
-                  )}
-                </label>
-              </div>
-            </div>
+                  {/* 2. Official Mark Scheme Upload */}
+                  <div
+                    className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
+                      isLight
+                        ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
+                        : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
+                    }`}
+                  >
+                    <label className="block cursor-pointer">
+                      <span className="text-sm font-semibold block mb-1">
+                        2. Upload Official Mark Scheme
+                      </span>
+                      <span className={`text-xs block mb-4 ${mutedText}`}>
+                        PDF or Images (JPG/PNG) — Complete official marking rubric
+                      </span>
+                      <input
+                        type="file"
+                        id="markScheme"
+                        name="markScheme"
+                        multiple
+                        accept=".pdf,image/*"
+                        required={auditSchemeFiles.length === 0}
+                        onChange={(e) => {
+                          const files = e.target.files
+                            ? Array.from(e.target.files)
+                            : [];
+                          setAuditSchemeFiles(files);
+                          handleFileUpload(e);
+                        }}
+                        className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
+                      />
+                      {auditSchemeFiles.length > 0 && (
+                        <div className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          {auditSchemeFiles.length} Official Mark Scheme file(s) ready:{' '}
+                          {auditSchemeFiles.map((f) => f.name).join(', ')}
+                        </div>
+                      )}
+                    </label>
+                  </div>
+                </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-              <p id="statusText" className={`text-xs sm:text-sm ${mutedText}`}>
-                {auditStatusText}
-              </p>
-              <button
-                type="submit"
-                id="submitBtn"
-                disabled={isAuditStreaming}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
-              >
-                {isAuditStreaming ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Running 4-Stage Forensic Audit...</span>
-                  </>
-                ) : (
-                  <span>Run Full Examiner Audit</span>
-                )}
-              </button>
-            </div>
-          </form>
+                {/* Pipeline Progress Bar & Controls */}
+                <div className="mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-t border-current/10 pt-4">
+                  <div className="flex items-center gap-3">
+                    {isAuditStreaming && (
+                      <div
+                        id="spinner"
+                        className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0"
+                      />
+                    )}
+                    <p
+                      id="statusText"
+                      className={`text-xs sm:text-sm font-medium ${mutedText}`}
+                    >
+                      {auditStatusText}
+                    </p>
+                  </div>
+                  <button
+                    type="submit"
+                    id="submitBtn"
+                    disabled={isAuditStreaming}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                  >
+                    {isAuditStreaming
+                      ? 'Processing OCR & Grading...'
+                      : 'Extract OCR & Grade Paper'}
+                  </button>
+                </div>
+              </form>
 
-          {/* Live Output Container */}
-          {auditReportVisible && (
-            <div
-              id="resultContainer"
-              className={`mt-6 rounded-xl border p-6 sm:p-8 ${
-                isLight
-                  ? 'bg-white border-slate-200 text-slate-800'
-                  : 'bg-[#090D16] border-white/10 text-slate-100'
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-current/10 pb-4 mb-6">
-                <h3 className="text-lg font-bold">
-                  Examiner Moderation Report
-                </h3>
-                <button
-                  type="button"
-                  id="copyBtn"
-                  onClick={() => {
-                    navigator.clipboard
-                      .writeText(auditRawMarkdown)
-                      .catch(() => {});
-                    setCopiedRawReport(true);
-                    setTimeout(() => setCopiedRawReport(false), 2000);
-                  }}
-                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded transition"
+              {/* Output Sub-Tabs (Switch between OCR Transcription & Final Grading Report) */}
+              {auditReportVisible && (
+                <div
+                  id="resultContainer"
+                  className={`mt-6 rounded-xl border overflow-hidden ${
+                    isLight
+                      ? 'bg-white border-slate-200 text-slate-800'
+                      : 'bg-[#090D16] border-white/10 text-slate-100'
+                  }`}
                 >
-                  {copiedRawReport ? 'Copied!' : 'Copy Raw Report'}
-                </button>
-              </div>
+                  <div
+                    className={`px-6 py-3 border-b flex flex-wrap items-center justify-between gap-3 ${
+                      isLight
+                        ? 'bg-slate-100 border-slate-200'
+                        : 'bg-[#111827] border-white/10'
+                    }`}
+                  >
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        id="subTabReportBtn"
+                        onClick={() => setExaminerSubTab('report')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                          examinerSubTab === 'report'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        ✅ Final Moderation Report (Stages 3 &amp; 4)
+                      </button>
+                      <button
+                        type="button"
+                        id="subTabOcrBtn"
+                        onClick={() => setExaminerSubTab('ocr')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                          examinerSubTab === 'ocr'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        🔍 Verbatim OCR &amp; Mark Scheme Transcript (Stages 1 &amp; 2)
+                      </button>
+                    </div>
+
+                    <div className="flex gap-2">
+                      {examinerSubTab === 'ocr' && (
+                        <button
+                          type="button"
+                          id="reEvaluateBtn"
+                          disabled={isAuditStreaming}
+                          onClick={() => runEvaluationFromTranscript()}
+                          className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded transition disabled:opacity-50"
+                        >
+                          Re-Grade Edited OCR Transcript
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        id="copyBtn"
+                        onClick={() => {
+                          const textToCopy =
+                            examinerSubTab === 'report'
+                              ? auditRawMarkdown
+                              : auditOcrMarkdown;
+                          navigator.clipboard
+                            .writeText(textToCopy)
+                            .catch(() => {});
+                          setCopiedRawReport(true);
+                          setTimeout(() => setCopiedRawReport(false), 2000);
+                        }}
+                        className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-3 py-1.5 rounded transition"
+                      >
+                        {copiedRawReport ? 'Copied!' : 'Copy Output'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Sub-Tab 1: Final Moderation Report */}
+                  {examinerSubTab === 'report' ? (
+                    <div id="viewReport" className="p-6 sm:p-8">
+                      <div
+                        id="reportOutput"
+                        className="markdown-body leading-relaxed text-sm"
+                        dangerouslySetInnerHTML={{
+                          __html:
+                            auditRenderedHtml ||
+                            '<p class="text-slate-400 italic">Waiting for Step 1 OCR transcription to complete before streaming Step 2 Moderation Report...</p>',
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    /* Sub-Tab 2: Verbatim OCR Transcript (Editable & Inspectable) */
+                    <div
+                      id="viewOcr"
+                      className={`p-6 sm:p-8 ${
+                        isLight ? 'bg-slate-50' : 'bg-[#090D16]'
+                      }`}
+                    >
+                      <p className={`text-xs mb-3 ${mutedText}`}>
+                        Below is the raw 100% verbatim OCR transcription of the
+                        student&apos;s handwriting, annotations, and mark scheme.
+                        You can inspect or edit any character and click{' '}
+                        <strong>&quot;Re-Grade Edited OCR Transcript&quot;</strong>{' '}
+                        above.
+                      </p>
+                      <textarea
+                        id="ocrTextarea"
+                        rows={18}
+                        value={auditOcrMarkdown}
+                        onChange={(e) => setAuditOcrMarkdown(e.target.value)}
+                        className={`w-full font-mono text-xs p-4 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-6 ${
+                          isLight
+                            ? 'border-slate-300 bg-white text-slate-800'
+                            : 'border-white/15 bg-[#111827] text-slate-100'
+                        }`}
+                        placeholder="OCR transcription will stream here..."
+                      />
+                      <h3 className="text-sm font-bold mb-2">
+                        Formatted OCR Preview:
+                      </h3>
+                      <div
+                        id="ocrOutput"
+                        className={`markdown-body p-6 rounded-lg border text-sm ${
+                          isLight
+                            ? 'bg-white border-slate-200 text-slate-800'
+                            : 'bg-[#111827] border-white/10 text-slate-100'
+                        }`}
+                        dangerouslySetInnerHTML={{
+                          __html: String(marked.parse(auditOcrMarkdown || '')),
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* SECTION 2: NORMAL AI CHAT TAB */
+            <div id="sectionChat">
               <div
-                id="reportOutput"
-                className="markdown-body leading-relaxed text-sm"
-                dangerouslySetInnerHTML={{ __html: auditRenderedHtml }}
-              />
+                className={`rounded-xl border flex flex-col h-[580px] overflow-hidden ${
+                  isLight
+                    ? 'bg-white border-slate-200'
+                    : 'bg-[#090D16] border-white/10'
+                }`}
+              >
+                <div
+                  className={`px-6 py-4 border-b flex items-center justify-between ${
+                    isLight
+                      ? 'bg-slate-100 border-slate-200'
+                      : 'bg-[#111827] border-white/10'
+                  }`}
+                >
+                  <div>
+                    <h3 className="text-base font-bold">
+                      AI Examiner &amp; Study Chat
+                    </h3>
+                    <p className={`text-xs ${mutedText}`}>
+                      Ask general subject questions or discuss the paper you just
+                      graded in the Paper Correction tab.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPortalChatMessages([
+                        {
+                          id: `clear-${Date.now()}`,
+                          role: 'assistant',
+                          content: 'Chat history cleared. Ask me anything!',
+                        },
+                      ])
+                    }
+                    className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 font-semibold px-3 py-1.5 rounded"
+                  >
+                    Clear Chat
+                  </button>
+                </div>
+
+                <div
+                  id="chatMessages"
+                  className={`flex-1 p-6 overflow-y-auto space-y-4 ${
+                    isLight ? 'bg-slate-50' : 'bg-[#090D16]'
+                  }`}
+                >
+                  {portalChatMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={
+                        msg.role === 'user'
+                          ? 'flex justify-end'
+                          : 'flex justify-start'
+                      }
+                    >
+                      <div
+                        className={
+                          msg.role === 'user'
+                            ? 'max-w-2xl bg-indigo-600 text-white rounded-2xl rounded-tr-none px-4 py-3 text-sm shadow-sm'
+                            : `max-w-2xl border rounded-2xl rounded-tl-none px-4 py-3 text-sm shadow-sm markdown-body ${
+                                isLight
+                                  ? 'bg-white border-slate-200 text-slate-800'
+                                  : 'bg-[#111827] border-white/10 text-slate-100'
+                              }`
+                        }
+                        dangerouslySetInnerHTML={{
+                          __html:
+                            msg.role === 'user'
+                              ? msg.content
+                              : String(marked.parse(msg.content || '')),
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <div ref={portalChatEndRef} />
+                </div>
+
+                <form
+                  id="chatForm"
+                  onSubmit={handleSendPortalChat}
+                  className={`p-4 border-t flex gap-3 ${
+                    isLight
+                      ? 'bg-white border-slate-200'
+                      : 'bg-[#111827] border-white/10'
+                  }`}
+                >
+                  <input
+                    type="text"
+                    id="chatInput"
+                    value={portalChatInput}
+                    onChange={(e) => setPortalChatInput(e.target.value)}
+                    placeholder="Ask a question about a question, mark scheme, or topic..."
+                    required
+                    className={`flex-1 px-4 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                      isLight
+                        ? 'border-slate-300 bg-white text-slate-900'
+                        : 'border-white/15 bg-[#090D16] text-white'
+                    }`}
+                  />
+                  <button
+                    type="submit"
+                    id="chatSendBtn"
+                    disabled={isPortalChatStreaming}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm shadow transition disabled:opacity-50"
+                  >
+                    Send
+                  </button>
+                </form>
+              </div>
             </div>
           )}
         </div>

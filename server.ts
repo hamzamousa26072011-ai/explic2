@@ -521,8 +521,22 @@ const PORT = Number(process.env.PORT) || 3000;
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit per file
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit per file
 });
+
+// Middleware to verify site key (key_ps5gnQ9rlp4xSCl6)
+function verifySiteKey(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const clientKey = req.headers['x-site-key'] || req.body?.siteKey;
+  const validKey = process.env.SITE_ACCESS_KEY || 'key_ps5gnQ9rlp4xSCl6';
+  if (clientKey && clientKey !== validKey) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid Site Key.' });
+  }
+  next();
+}
 
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
@@ -977,6 +991,115 @@ function buildFallbackExaminerLedger(params: {
   };
 }
 
+// ============================================================================
+// PROMPT 1: FORENSIC OCR & MARK SCHEME TRANSCRIPTION (STAGES 1 & 2)
+// ============================================================================
+export const OCR_TRANSCRIPTION_PROMPT = `# ROLE & AUTHORITY
+You are an elite Forensic OCR & Handwriting Transcription Specialist for Cambridge Assessment International Education (CAIE — IGCSE / O-Level / International AS & A-Level), Pearson Edexcel (International GCSE / IAL), and OxfordAQA.
+
+Your mandate is to inspect every single uploaded page image/PDF of the Past Paper / Student Script and the Official Mark Scheme with **100% verbatim fidelity and zero omissions**.
+
+---
+
+# STAGE 1 — ZERO-OMISSION FORENSIC OCR & ANNOTATION TRANSCRIPTION
+Go through the Past Paper / Student Script **page by page, from Page 1 to the final page**.
+**CRITICAL RULE: DO NOT LEAVE ANYTHING OUT. DO NOT SUMMARIZE, PARAPHRASE, OR SKIP ANY SUB-QUESTION OR ANNOTATION.**
+
+For every page and every question/sub-question (e.g., \`1(a)\`, \`1(b)(i)\`, \`1(b)(ii)\`, \`2(a)\`, etc.):
+1. **Question Identification**:
+   - Extract the exact Page Number, Question Number, Sub-Question, Printed Question Prompt, Command Word (e.g., *State, Explain, Calculate, Suggest, Evaluate*), and Maximum Available Marks \`[N]\`.
+2. **Verbatim Student Writing Transcription**:
+   - Transcribe **100% of what the student wrote** word-for-word and symbol-for-symbol, preserving exact spelling, grammar, punctuation, mathematical equations, numerical substitutions, units, significant figures, chemical formulas, state symbols \`(s), (l), (g), (aq)\`, table entries, and circled multiple-choice options.
+3. **Complete Paper Annotations & Visual Markings Extraction**:
+   - Extract **every annotation written anywhere on the paper**, including:
+     - Margin notes, side calculations, and rough working
+     - Underlined, highlighted, or circled keywords/numbers in the question stem
+     - Arrows, diagrams, free-body force vectors, ray paths, circuit symbols, and graph plottings/tangent readings
+     - Crossed-out or amended work (transcribe as \`[Crossed out: ...] -> [Amended to: ...]\`)
+     - Any existing ticks, crosses, or self-corrections written on the script.
+
+Format Stage 1 output clearly as:
+> **[Page X | Question N(sub) — Max Marks: M]**
+> - **Printed Question**: ...
+> - **Student Writing (Verbatim OCR)**: ...
+> - **Margin / Diagram / Working Annotations**: ...
+
+---
+
+# STAGE 2 — EXHAUSTIVE OFFICIAL MARK SCHEME EXTRACTION
+Go through the Official Mark Scheme **page by page, from Question 1 to the final question**.
+**CRITICAL RULE: DO NOT MISS ANY DETAIL. DO NOT OMIT ANY SUB-QUESTION, MARKING CODE, OR EXAMINER GUIDANCE NOTE.**
+
+For every question and sub-question:
+1. **Mark Allocation & Codes**:
+   - Extract the exact maximum marks and every individual marking point code:
+     - **M marks** (Method marks — awarded for correct method/substitution even if final numerical value is inaccurate)
+     - **A marks** (Accuracy marks — dependent on preceding M mark unless stated otherwise)
+     - **B marks** (Independent marks — awarded standalone regardless of method)
+     - **C marks** (Compensation marks) or **Level / Band Descriptors** (Content & Communication vs. Language / Quality of Extended Response).
+2. **Exact Examiner Rubric & Guidance**:
+   - Extract **all** examiner notes verbatim:
+     - Mandatory underlined/bold keywords or required technical phrases
+     - Acceptable alternatives (\`Accept...\`, \`Allow...\`, \`owtte\` — *or words to that effect*, numerical tolerance ranges)
+     - Disallowed or penalized responses (\`Reject...\`, \`Do not accept...\`, \`Ignore...\`)
+     - Error Carried Forward (\`ECF\`) rules, unit requirements, and significant figure rules.`;
+
+// ============================================================================
+// PROMPT 2: 3-PASS MODERATION & 4 DELIVERABLES (STAGES 3 & 4)
+// ============================================================================
+export const EXAMINER_MODERATION_PROMPT = `# ROLE & AUTHORITY
+You are an elite Principal Examiner and Senior Assessment Moderator for Cambridge Assessment International Education (CAIE — IGCSE / O-Level / International AS & A-Level), Pearson Edexcel (International GCSE / IAL), and OxfordAQA.
+
+You are provided with the complete, verbatim **Stage 1 Forensic OCR Student Script Transcription** and the **Stage 2 Official Mark Scheme Extraction**. Compare and analyze the transcribed text against the mark scheme with 100% precision.
+
+---
+
+# STAGE 3 — 3-PASS INDEPENDENT MARKING & MODERATION PROTOCOL
+Evaluate the student's transcribed script from Stage 1 strictly against the extracted Mark Scheme from Stage 2 using three sequential passes:
+
+- **Pass 1 (Strict Point-by-Point Marking)**:
+  Match each clause, equation, or step in the student's transcribed response to the exact Mark Scheme points (\`M1\`, \`A1\`, \`B1\`, or Band descriptors). Never award marks by assumption or "benefit of the doubt" where a mandatory keyword, state symbol, or unit is missing.
+- **Pass 2 (Technical & Consequential Verification)**:
+  Verify Error Carried Forward (\`ECF\`) across linked sub-questions so a student is never double-penalized for an earlier calculation error if their subsequent method is correct. Verify significant figures, rounding, SI units, and word-count discipline.
+- **Pass 3 (Senior Moderator Lock)**:
+  Reconcile Pass 1 and Pass 2 against official board marking conventions (\`Accept\` / \`Reject\` / \`Ignore\` rules) and lock the final score for every sub-question.
+
+---
+
+# STAGE 4 — REQUIRED 4-DELIVERABLE OUTPUT STRUCTURE
+
+## Deliverable 1: Executive Summary & Breakdown Table
+- **Header Banner**: Examination Board, Qualification, Subject, Paper Code/Component, Total Marks Awarded (\`X / Y\`), Percentage (\`Z%\`), and Provisional Grade (\`A* / A / B / C / 9–1\`).
+- **Question-by-Question Breakdown Table**:
+  Columns: \`Question\` | \`Topic / Task\` | \`Student Key Evidence\` | \`Mark Scheme Breakdown\` | \`Score (Awarded / Max)\`.
+- **Examiner's Overview**: High-level synthesis of script performance, precision, and technique.
+
+## Deliverable 2: Line-by-Line Annotated Script & Deep-Dive Corrections (Every Question)
+For **every single question and sub-question** on the paper:
+1. **Question Header**: \`Question N(sub) · [Topic] · [Awarded / Max Marks]\` + exact Mark Scheme basis.
+2. **Line-by-Line Annotated Student Script**:
+   Split the student's verbatim OCR transcription line-by-line or step-by-step:
+   - Prefix/mark lines that satisfy a Mark Scheme point or demonstrate accurate working with \`[GREEN HIGHLIGHT | ✓]\`
+   - Prefix/mark lines containing a factual, mathematical, unit, lexical, or grammatical error/omission with \`[RED HIGHLIGHT | ✗]\`
+3. **What Earned You Ticks (\`✓\`)**:
+   - Bullet list quoting the student's exact words/working and citing the specific Mark Scheme point (\`M1\`, \`A1\`, \`B1\`, or Band criteria) earned.
+4. **Corrections Marked with a Red Cross (\`✗\`) & Why Marks Were Lost**:
+   For every error or missed mark, provide a structured 4-part correction block:
+   - **\`✗\` Quoted Student Error / Omission**: \`"Exact quote from the student's OCR transcript"\`
+   - **Why It Lost Marks (Mark Scheme Reference)**: Explicit explanation citing the exact Mark Scheme requirement, \`Reject\` rule, or missing keyword.
+   - **\`»\` Direct Model Correction**: The exact corrected sentence, equation, or step that secures the mark.
+   - **Full-Mark Examiner Tip / Higher-Range Phrasing**: How to write or structure the response to guarantee full marks under exam conditions.
+5. **Examiner Comment on Question N**: Concise moderator takeaway for that question.
+
+## Deliverable 3: Whole-Script Diagnostic & Action Plan
+- **Strengths to Protect (\`✓\`)**: 3–5 specific strengths demonstrated across the paper.
+- **Where Marks Went (\`✗\`)**: Categorized analysis of every mark lost across the paper (e.g., missing keywords, unit/sig-fig slips, incomplete working, misread command words).
+- **Next Four Concrete Exam Targets**: 4 high-impact, actionable fixes for the student's next paper.
+- **Projected Score with Fixes Applied**: Exact calculation of what this script would score once those fixes are applied.
+
+## Deliverable 4: Concise Parent / Student Summary (WhatsApp Format)
+- Clean, scannable summary with Final Score, Percentage, Provisional Grade, Top Strengths, Main Areas for Improvement, and Priority Revision Topics.`;
+
 // Helper to convert uploaded files (PDF or Image) into OpenAI content blocks
 function fileToOpenAIBlock(file: Express.Multer.File): any {
   const base64Data = file.buffer.toString('base64');
@@ -1008,6 +1131,323 @@ function fileToGeminiPart(file: Express.Multer.File): any {
     },
   };
 }
+
+// ============================================================================
+// ENDPOINT 1: STEP 1 — FORENSIC OCR EXTRACTION (READS PDF PAGES & HANDWRITING)
+// ============================================================================
+app.post(
+  '/api/ocr-extract',
+  verifySiteKey,
+  upload.fields([
+    { name: 'studentScript', maxCount: 40 },
+    { name: 'markScheme', maxCount: 40 },
+  ]),
+  async (req, res) => {
+    try {
+      const filesMap = (req.files as Record<string, Express.Multer.File[]>) || {};
+      const scriptFiles = filesMap['studentScript'] || [];
+      const schemeFiles = filesMap['markScheme'] || [];
+
+      if (scriptFiles.length === 0 || schemeFiles.length === 0) {
+        return res.status(400).json({
+          error: 'Please upload both the Student Script and the Official Mark Scheme.',
+        });
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const openAiKey = (process.env.OPENAI_API_KEY || '').trim();
+      const hasValidOpenAiKey =
+        openAiKey.startsWith('sk-') &&
+        !openAiKey.includes('REPLACE_WITH_YOUR_FULL_UNMASKED_KEY');
+
+      let streamedSuccessfully = false;
+
+      if (hasValidOpenAiKey) {
+        try {
+          const openai = new OpenAI({ apiKey: openAiKey });
+          const userContent = [
+            {
+              type: 'text',
+              text: 'Inspect every uploaded page of the **Past Paper / Student Script** and **Official Mark Scheme**. Perform Stage 1 (Zero-Omission Forensic OCR & Handwriting/Annotation Transcription) and Stage 2 (Exhaustive Official Mark Scheme Extraction) verbatim.',
+            },
+            { type: 'text', text: '--- START OF STUDENT SCRIPT PAGES ---' },
+            ...scriptFiles.map(fileToOpenAIBlock),
+            { type: 'text', text: '--- START OF OFFICIAL MARK SCHEME PAGES ---' },
+            ...schemeFiles.map(fileToOpenAIBlock),
+          ];
+
+          const stream = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            temperature: 0.0,
+            max_tokens: 16384,
+            stream: true,
+            messages: [
+              { role: 'system', content: OCR_TRANSCRIPTION_PROMPT },
+              { role: 'user', content: userContent as any },
+            ],
+          });
+
+          for await (const chunk of stream) {
+            const text = chunk.choices[0]?.delta?.content || '';
+            if (text) {
+              res.write(`data: ${JSON.stringify({ text })}\n\n`);
+            }
+          }
+          streamedSuccessfully = true;
+        } catch (openAiErr) {
+          console.warn(
+            'OpenAI OCR stream error, falling back to Gemini OCR:',
+            openAiErr
+          );
+        }
+      }
+
+      if (!streamedSuccessfully) {
+        const ai = getGeminiClient();
+        if (!ai) {
+          throw new Error(
+            'Neither GEMINI_API_KEY nor OPENAI_API_KEY is configured on the server.'
+          );
+        }
+
+        const geminiParts: any[] = [
+          {
+            text: 'Inspect every uploaded page of the **Past Paper / Student Script** and **Official Mark Scheme**. Perform Stage 1 (Zero-Omission Forensic OCR & Handwriting/Annotation Transcription) and Stage 2 (Exhaustive Official Mark Scheme Extraction) verbatim without leaving anything out.',
+          },
+          { text: '--- START OF STUDENT SCRIPT PAGES ---' },
+          ...scriptFiles.flatMap((f) => [
+            { text: `[Student Script Page: ${f.originalname}]` },
+            fileToGeminiPart(f),
+          ]),
+          { text: '--- START OF OFFICIAL MARK SCHEME PAGES ---' },
+          ...schemeFiles.flatMap((f) => [
+            { text: `[Official Mark Scheme Page: ${f.originalname}]` },
+            fileToGeminiPart(f),
+          ]),
+        ];
+
+        const responseStream = await ai.models.generateContentStream({
+          model: 'gemini-3.1-flash-lite',
+          contents: { parts: geminiParts },
+          config: {
+            systemInstruction: OCR_TRANSCRIPTION_PROMPT,
+            temperature: 0.0,
+            maxOutputTokens: 65536,
+          },
+        });
+
+        for await (const chunk of responseStream) {
+          const text = chunk.text || '';
+          if (text) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+        }
+      }
+
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (error: any) {
+      console.error('OCR Extraction Error:', error);
+      const errMessage = error?.message || 'OCR Extraction failed.';
+      if (!res.headersSent) {
+        res.status(500).json({ error: errMessage });
+      } else {
+        res.write(`data: ${JSON.stringify({ error: errMessage })}\n\n`);
+        res.end();
+      }
+    }
+  }
+);
+
+// ============================================================================
+// ENDPOINT 2: STEP 2 — ANALYZE OCR TRANSCRIPT AGAINST MARK SCHEME
+// ============================================================================
+app.post('/api/evaluate-transcript', verifySiteKey, async (req, res) => {
+  try {
+    const { ocrTranscript } = req.body || {};
+    if (!ocrTranscript) {
+      return res
+        .status(400)
+        .json({ error: 'Missing OCR Transcript for evaluation.' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const openAiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const hasValidOpenAiKey =
+      openAiKey.startsWith('sk-') &&
+      !openAiKey.includes('REPLACE_WITH_YOUR_FULL_UNMASKED_KEY');
+
+    const promptText = `Here is the complete verbatim Stage 1 & Stage 2 OCR Transcription of the Student Script and Official Mark Scheme:\n\n${ocrTranscript}\n\nNow execute Stage 3 (3-Pass Independent Marking & Moderation) and output all 4 Deliverables in Stage 4 with zero omissions.`;
+
+    let streamedSuccessfully = false;
+
+    if (hasValidOpenAiKey) {
+      try {
+        const openai = new OpenAI({ apiKey: openAiKey });
+        const stream = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          temperature: 0.1,
+          max_tokens: 16384,
+          stream: true,
+          messages: [
+            { role: 'system', content: EXAMINER_MODERATION_PROMPT },
+            { role: 'user', content: promptText },
+          ],
+        });
+
+        for await (const chunk of stream) {
+          const text = chunk.choices[0]?.delta?.content || '';
+          if (text) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+        }
+        streamedSuccessfully = true;
+      } catch (openAiErr) {
+        console.warn(
+          'OpenAI Evaluate-Transcript stream error, falling back to Gemini:',
+          openAiErr
+        );
+      }
+    }
+
+    if (!streamedSuccessfully) {
+      const ai = getGeminiClient();
+      if (!ai) {
+        throw new Error(
+          'Neither GEMINI_API_KEY nor OPENAI_API_KEY is configured on the server.'
+        );
+      }
+
+      const responseStream = await ai.models.generateContentStream({
+        model: 'gemini-3.1-flash-lite',
+        contents: promptText,
+        config: {
+          systemInstruction: EXAMINER_MODERATION_PROMPT,
+          temperature: 0.1,
+          maxOutputTokens: 65536,
+        },
+      });
+
+      for await (const chunk of responseStream) {
+        const text = chunk.text || '';
+        if (text) {
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error: any) {
+    console.error('Evaluation Error:', error);
+    const errMessage = error?.message || 'Evaluation failed.';
+    if (!res.headersSent) {
+      res.status(500).json({ error: errMessage });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errMessage })}\n\n`);
+      res.end();
+    }
+  }
+});
+
+// ============================================================================
+// ENDPOINT 3: NORMAL AI CHAT TAB (WITH ACCESS TO PAPER CONTEXT IF AVAILABLE)
+// ============================================================================
+app.post('/api/chat', verifySiteKey, async (req, res) => {
+  try {
+    const { messages = [], paperContext = '' } = req.body || {};
+
+    const systemContent = `You are an elite Principal Examiner and helpful AI Tutor for CAIE (IGCSE / O-Level / AS & A-Level), Pearson Edexcel, and OxfordAQA. You answer general academic questions, explain mark schemes, solve past paper problems, and help students improve their exam technique.${
+      paperContext
+        ? `\n\nCONTEXT FROM THE CURRENTLY GRADED PAPER:\n${paperContext}`
+        : ''
+    }`;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const openAiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const hasValidOpenAiKey =
+      openAiKey.startsWith('sk-') &&
+      !openAiKey.includes('REPLACE_WITH_YOUR_FULL_UNMASKED_KEY');
+
+    let streamedSuccessfully = false;
+
+    if (hasValidOpenAiKey) {
+      try {
+        const openai = new OpenAI({ apiKey: openAiKey });
+        const stream = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          temperature: 0.4,
+          max_tokens: 4096,
+          stream: true,
+          messages: [{ role: 'system', content: systemContent }, ...messages],
+        });
+
+        for await (const chunk of stream) {
+          const text = chunk.choices[0]?.delta?.content || '';
+          if (text) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+        }
+        streamedSuccessfully = true;
+      } catch (openAiErr) {
+        console.warn('OpenAI Chat error, falling back to Gemini:', openAiErr);
+      }
+    }
+
+    if (!streamedSuccessfully) {
+      const ai = getGeminiClient();
+      if (!ai) {
+        throw new Error(
+          'Neither GEMINI_API_KEY nor OPENAI_API_KEY is configured on the server.'
+        );
+      }
+
+      const formattedConversation = (Array.isArray(messages) ? messages : [])
+        .map((m: any) => `${String(m.role || 'user').toUpperCase()}: ${String(m.content || '')}`)
+        .join('\n\n');
+
+      const responseStream = await ai.models.generateContentStream({
+        model: 'gemini-3.1-flash-lite',
+        contents:
+          formattedConversation ||
+          'Hello! Please introduce yourself as the AI Principal Examiner & Tutor.',
+        config: {
+          systemInstruction: systemContent,
+          temperature: 0.4,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      for await (const chunk of responseStream) {
+        const text = chunk.text || '';
+        if (text) {
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error: any) {
+    console.error('Chat API Error:', error);
+    const errMessage = error?.message || 'Chat failed.';
+    if (!res.headersSent) {
+      res.status(500).json({ error: errMessage });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errMessage })}\n\n`);
+      res.end();
+    }
+  }
+});
 
 // 0. Dedicated Forensic OCR & 3-Pass Moderation Streaming Endpoint (/api/evaluate-script)
 app.post(
