@@ -870,7 +870,10 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       if (shouldRunEvaluation) {
         const res = await fetch('/api/scholar/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-site-key': SITE_KEY,
+          },
           body: JSON.stringify({
             mode: 'evaluate',
             board,
@@ -937,7 +940,10 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       } else {
         const res = await fetch('/api/scholar/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-site-key': SITE_KEY,
+          },
           body: JSON.stringify({
             mode: 'tutor_chat',
             board,
