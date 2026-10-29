@@ -1664,22 +1664,54 @@ app.post('/api/scholar/chat', async (req, res) => {
           text: `${prompt || userPrompt}\n\nContext: Board=${board}, Qualification=${qualification}, Subject=${subject}.`,
         });
 
-        for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.8-flash']) {
+        const fastTutorSystemInstruction = `You are a Principal Examiner & Senior Moderator for Cambridge (CAIE), Pearson Edexcel, and OxfordAQA.
+Respond concisely, clearly, and directly.
+STRICT FORMATTING RULES:
+1. NEVER use dollar signs ($ or $$) or LaTeX backslash commands (such as \\varepsilon, \\frac, \\times, \\Delta). Write all formulas and symbols in clean, plain readable text (for example: E = W / Q, where E is emf in Volts, W is work done in Joules, and Q is charge in Coulombs).
+2. NEVER output "---" horizontal rule lines or single-asterisk italics (*word*).
+3. Structure definitions and explanations cleanly using these exact headings:
+### The Standard Definition
+### Examiner's Breakdown (Marking Criteria)
+### Common Pitfalls & Examiner Notes
+4. Use simple "- " bullet points for marking criteria and pitfalls.`;
+
+        const cleanTutorReply = (raw: string): string =>
+          String(raw || '')
+            .replace(/\$\$/g, '')
+            .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 / $2')
+            .replace(/\\varepsilon|\\epsilon/g, 'E')
+            .replace(/\\Delta/g, 'Δ')
+            .replace(/\\Omega/g, 'Ω')
+            .replace(/\\times/g, '×')
+            .replace(/\\div/g, '÷')
+            .replace(/\\pm/g, '±')
+            .replace(/\\approx/g, '≈')
+            .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+            .replace(/\\text\{([^}]+)\}|\\mathrm\{([^}]+)\}/g, '$1$2')
+            .replace(/\$([^$\n]+)\$/g, '$1')
+            .replace(/\$/g, '')
+            .replace(/\\([a-zA-Z]+)/g, '$1')
+            .replace(/^\s*[-*_]{3,}\s*$/gm, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+        for (const modelName of ['gemini-3.8-flash', 'gemini-3.1-flash-lite']) {
           try {
             const response = await withScholarTimeout(
               ai.models.generateContent({
                 model: modelName,
                 contents: { parts: chatParts },
                 config: {
-                  systemInstruction: `${PRINCIPAL_EXAMINER_SYSTEM_PROMPT}\nTake your time to think step-by-step and respond with maximum accuracy, structured mark-scheme bullet points, exact examiner phrasing, and common pitfalls. Structure definitions and explanations cleanly using sections like:\n### The Standard Definition\n### Examiner's Breakdown (Marking Criteria)\n### Common Pitfalls & Examiner Notes`,
+                  systemInstruction: fastTutorSystemInstruction,
                   temperature: 0.1,
+                  maxOutputTokens: 1024,
                 },
               }),
-              45000
+              20000
             );
             if (response.text) {
               return res.json({
-                reply: response.text,
+                reply: cleanTutorReply(response.text),
                 engineUsed: `Gemini (${modelName}) Principal Examiner`,
               });
             }

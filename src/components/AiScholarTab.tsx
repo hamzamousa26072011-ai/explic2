@@ -2014,10 +2014,25 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 {activeSession.messages.map((msg) => {
                   const isUser = msg.role === 'user';
                   const cleanParagraphs = String(msg.text || '')
+                    .replace(/\$\$/g, '')
+                    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 / $2')
+                    .replace(/\\varepsilon|\\epsilon/g, 'E')
+                    .replace(/\\Delta/g, 'Δ')
+                    .replace(/\\Omega/g, 'Ω')
+                    .replace(/\\times/g, '×')
+                    .replace(/\\div/g, '÷')
+                    .replace(/\\pm/g, '±')
+                    .replace(/\\approx/g, '≈')
+                    .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+                    .replace(/\\text\{([^}]+)\}|\\mathrm\{([^}]+)\}/g, '$1$2')
+                    .replace(/\$([^$\n]+)\$/g, '$1')
+                    .replace(/\$/g, '')
+                    .replace(/\\([a-zA-Z]+)/g, '$1')
                     .replace(/\*\*([^*]+)\*\*/g, '$1')
+                    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,;:!?)]|$)/g, '$1$2')
                     .split('\n')
                     .map((l) => l.trim())
-                    .filter(Boolean);
+                    .filter((l) => Boolean(l) && !/^[-*_]{3,}$/.test(l));
 
                   return (
                     <div key={msg.id} className="space-y-3.5">
@@ -2080,14 +2095,18 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                           {cleanParagraphs.map((line, lIdx) => {
                             const isHeading =
                               line.startsWith('#') ||
-                              /^(?:Pass \d|Output [A-D]|Summary|Key Points|Lost Marks|Model Answer|The Standard Definition|Examiner’s Breakdown|Examiner's Breakdown|Common Pitfalls)/i.test(
+                              /^(?:\d+\.\s*)?(?:Pass \d|Output [A-D]|Summary|Key Points|Lost Marks|Model Answer|The Standard Definition|Examiner’s Breakdown|Examiner's Breakdown|Common Pitfalls)/i.test(
                                 line
                               );
                             const isBullet =
-                              line.startsWith('- ') ||
-                              line.startsWith('• ') ||
-                              /^\d+\.\s/.test(line);
-                            const cleanedLine = line.replace(/^#+\s*/, '');
+                              !isHeading &&
+                              (line.startsWith('- ') ||
+                                line.startsWith('• ') ||
+                                line.startsWith('* ') ||
+                                /^\d+\.\s/.test(line));
+                            const cleanedLine = line
+                              .replace(/^#+\s*/, '')
+                              .replace(/^>\s*/, '');
 
                             if (isHeading) {
                               return (
@@ -2100,9 +2119,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                                       ? '#0F172A'
                                       : '#F8FAFC',
                                   }}
-                                  className="font-bold text-xs sm:text-sm pt-1 first:pt-0 tracking-tight"
+                                  className="font-bold text-xs sm:text-sm pt-1.5 first:pt-0 tracking-tight"
                                 >
-                                  {cleanedLine}
+                                  {cleanedLine.replace(/^\d+\.\s*/, '')}
                                 </div>
                               );
                             }
@@ -2117,7 +2136,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                                   </span>
                                   <span>
                                     {cleanedLine.replace(
-                                      /^(?:[-•]|\d+\.)\s*/,
+                                      /^(?:[-•*]|\d+\.)\s*/,
                                       ''
                                     )}
                                   </span>
