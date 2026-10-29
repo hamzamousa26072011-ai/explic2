@@ -2879,16 +2879,20 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 {isProcessing && (
                   <div
                     id="examiner-live-working-card"
-                    className={`rounded-2xl border p-4 transition-all max-w-xs flex items-center gap-3 shadow-xs ${subtleSurface}`}
+                    className={`rounded-2xl border p-4 transition-all max-w-xs flex items-center gap-3 shadow-xs ${
+                      isLight
+                        ? 'bg-white border-slate-200 text-black'
+                        : 'bg-[#111827] border-white/10 text-white'
+                    }`}
                   >
-                    <div className="w-8 h-8 rounded-xl bg-indigo-600/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                    <div className="w-8 h-8 rounded-xl bg-slate-900/10 text-black dark:text-white flex items-center justify-center shrink-0">
+                      <Loader2 className="w-4 h-4 animate-spin text-black dark:text-white" />
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      <span className="text-sm font-bold text-black dark:text-white">
                         Thinking...
                       </span>
-                      <span className="text-xs font-mono-tabular opacity-60">
+                      <span className="text-xs font-mono-tabular font-semibold text-black/75 dark:text-white/75">
                         ({workingElapsedSec}s)
                       </span>
                     </div>
@@ -2907,17 +2911,17 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               <div
                 className={`px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 ${
                   isLight
-                    ? 'bg-indigo-50/90 border-indigo-200 text-indigo-950'
-                    : 'bg-[#6366F1]/15 border-[#6366F1]/30 text-indigo-200'
+                    ? 'bg-white border-slate-300 text-black shadow-xs'
+                    : 'bg-[#111827] border-white/20 text-white'
                 }`}
               >
                 <div className="flex items-center gap-2 truncate">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span className="font-semibold truncate">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-black dark:text-white shrink-0" />
+                  <span className="font-bold truncate text-black dark:text-white">
                     Thinking...
                   </span>
                 </div>
-                <span className="text-[11px] font-mono-tabular font-bold shrink-0">
+                <span className="text-[11px] font-mono-tabular font-bold shrink-0 text-black/80 dark:text-white/80">
                   {workingElapsedSec}s
                 </span>
               </div>
