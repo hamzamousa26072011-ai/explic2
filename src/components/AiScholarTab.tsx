@@ -192,21 +192,6 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   const [auditReportVisible, setAuditReportVisible] = useState(false);
   const [copiedRawReport, setCopiedRawReport] = useState(false);
 
-  // Normal AI Chat Tab State (/api/chat)
-  const [portalChatMessages, setPortalChatMessages] = useState<
-    Array<{ id: string; role: 'user' | 'assistant'; content: string }>
-  >([
-    {
-      id: 'welcome-msg',
-      role: 'assistant',
-      content:
-        'Hello! I am your AI Examiner & Tutor. You can chat with me about any IGCSE, O-Level, or A-Level topic, or switch to the **Paper Correction** tab to upload a script and mark scheme for full forensic OCR grading.',
-    },
-  ]);
-  const [portalChatInput, setPortalChatInput] = useState('');
-  const [isPortalChatStreaming, setIsPortalChatStreaming] = useState(false);
-  const portalChatEndRef = useRef<HTMLDivElement | null>(null);
-
   const SITE_KEY = 'key_ps5gnQ9rlp4xSCl6';
 
   const formatHighlights = (html: string) => {
@@ -425,78 +410,6 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       setAuditStatusText('Error: ' + msg);
       setAuditRenderedHtml(`<div class="red-highlight">Error: ${msg}</div>`);
       setIsAuditStreaming(false);
-    }
-  };
-
-  // Normal AI Chat Tab Submission (/api/chat)
-  const handleSendPortalChat = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const userText = portalChatInput.trim();
-    if (!userText || isPortalChatStreaming) return;
-
-    if (onTriggerSecurityLockdown(userText, 'Examiner Chat')) return;
-
-    const userMsg = {
-      id: `chat-${Date.now()}-u`,
-      role: 'user' as const,
-      content: userText,
-    };
-    const aiPlaceholderId = `chat-${Date.now()}-a`;
-    const nextHistory = [...portalChatMessages, userMsg];
-
-    setPortalChatInput('');
-    setPortalChatMessages([
-      ...nextHistory,
-      { id: aiPlaceholderId, role: 'assistant', content: 'Thinking...' },
-    ]);
-    setIsPortalChatStreaming(true);
-
-    try {
-      const paperContext =
-        auditOcrMarkdown || auditRawMarkdown
-          ? `OCR TRANSCRIPT:\n${auditOcrMarkdown}\n\nMODERATION REPORT:\n${auditRawMarkdown}`
-          : '';
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-site-key': SITE_KEY,
-        },
-        body: JSON.stringify({
-          messages: nextHistory
-            .filter((m) => m.id !== 'welcome-msg')
-            .map((m) => ({ role: m.role, content: m.content })),
-          paperContext,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Chat request failed.');
-      }
-
-      let aiReply = '';
-      await readSSEStream(res, (chunkText) => {
-        aiReply += chunkText;
-        setPortalChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === aiPlaceholderId ? { ...m, content: aiReply } : m
-          )
-        );
-      });
-    } catch (err: any) {
-      const msg = err?.message || 'Chat request failed.';
-      setPortalChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === aiPlaceholderId ? { ...m, content: `Error: ${msg}` } : m
-        )
-      );
-    } finally {
-      setIsPortalChatStreaming(false);
-      setTimeout(() => {
-        portalChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 50);
     }
   };
 
@@ -919,6 +832,11 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         textContent: f.textContent,
       }));
 
+      const paperContextForChat =
+        auditOcrMarkdown || auditRawMarkdown
+          ? `\n\n--- GRADED PAPER CONTEXT FROM PAPER CORRECTION TAB ---\nOCR TRANSCRIPT:\n${auditOcrMarkdown}\n\nMODERATION REPORT:\n${auditRawMarkdown}`
+          : '';
+
       if (shouldRunEvaluation) {
         const res = await fetch('/api/scholar/chat', {
           method: 'POST',
@@ -997,7 +915,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
             subject: resolvedSubject,
             syllabusCode: '',
             reasoningEngine,
-            prompt: userDisplayMessage,
+            prompt: `${userDisplayMessage}${paperContextForChat}`,
             attachedFiles: serializedAttachedFiles,
           }),
         });
@@ -1095,8 +1013,8 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      {/* Top Header matching reference image */}
-      <header className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 pb-5 border-b border-current/10">
+      {/* Top Header with Dedicated Menu Tab Switcher (Paper Correction vs. General Chatbot) */}
+      <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-5 border-b border-current/10">
         <div className="space-y-2 max-w-2xl">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
@@ -1114,499 +1032,520 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                   isLight ? 'bg-[#0F172A]' : 'bg-[#6366F1]'
                 }`}
               />
-              AI EXAMINER &amp; TUTOR
+              {examinerMainTab === 'correction'
+                ? 'FORENSIC OCR & 3-PASS PAPER CORRECTION'
+                : 'AI STUDY CHATBOT & TUTOR'}
             </span>
           </div>
           <p className={`text-xs leading-relaxed ${mutedText}`}>
-            Academic examiner and tutor for all students, subjects, and
-            examination systems. Attach exam questions, past papers,
-            worksheets, or photos of your handwritten working to analyze
-            documents, evaluate marks, and receive step-by-step model answers.
+            {examinerMainTab === 'correction'
+              ? 'Upload your completed Past Paper / Student Script and Official Mark Scheme for 100% verbatim handwriting OCR extraction, 3-Pass moderation, and 14-page Annotated PDF grading.'
+              : 'Chat with your AI Study Tutor & Principal Examiner about any subject, concept, practice question, or paper.'}
           </p>
         </div>
 
-        {/* Right Header Controls: Hide Sidebar + New Chat */}
-        <div className="flex items-center gap-2.5 shrink-0 self-start lg:self-center">
-          <button
-            type="button"
-            onClick={() => setSidebarHidden((h) => !h)}
-            className={`px-3.5 py-2 rounded-full border text-xs font-semibold inline-flex items-center gap-1.5 transition-all ${outlineBtn}`}
+        {/* Top-Level Menu Tab Bar inside AI Examiner Tab */}
+        <div className="flex flex-wrap items-center gap-3 shrink-0 self-start lg:self-center">
+          <div
+            role="tablist"
+            aria-label="AI Examiner Mode Tabs"
+            className={`inline-flex p-1.5 rounded-2xl border ${
+              isLight
+                ? 'bg-slate-100 border-slate-200'
+                : 'bg-[#090D16] border-white/10'
+            }`}
           >
-            <History className="w-3.5 h-3.5 opacity-70" />
-            {sidebarHidden ? 'Show Sidebar' : 'Hide Sidebar'}
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={examinerMainTab === 'correction'}
+              id="tabCorrectionBtn"
+              onClick={() => setExaminerMainTab('correction')}
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all inline-flex items-center gap-2 ${
+                examinerMainTab === 'correction'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <span>📄</span>
+              <span>Paper Correction</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={examinerMainTab === 'chat'}
+              id="tabChatBtn"
+              onClick={() => setExaminerMainTab('chat')}
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all inline-flex items-center gap-2 ${
+                examinerMainTab === 'chat'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <span>💬</span>
+              <span>Chatbot</span>
+            </button>
+          </div>
 
-          <button
-            type="button"
-            onClick={handleStartNewChat}
-            className={`px-4 py-2 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 transition-all ${primaryBtn}`}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            New Chat
-          </button>
+          {examinerMainTab === 'chat' && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSidebarHidden((h) => !h)}
+                className={`px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-all ${outlineBtn}`}
+              >
+                <History className="w-3.5 h-3.5 opacity-70" />
+                {sidebarHidden ? 'Show Sidebar' : 'Hide Sidebar'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStartNewChat}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-all ${primaryBtn}`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New Chat
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
-      {/* CAIE / Edexcel / OxfordAQA — AI Principal Examiner & Assessment Portal (Forensic OCR & 3-Pass Moderation + Mini-Tabs) */}
-      <section className="rounded-2xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm">
-        <div className="bg-slate-900 text-white py-5 px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] uppercase tracking-widest bg-indigo-600 px-2.5 py-1 rounded font-semibold">
-              Forensic OCR &amp; 3-Pass Moderation
-            </span>
-            <h2 className="text-xl sm:text-2xl font-bold mt-2 text-white">
-              AI Principal Examiner &amp; Assessment Portal
-            </h2>
-            <p className="text-slate-400 text-xs sm:text-sm mt-0.5">
-              Cambridge (IGCSE / O-Level / AS &amp; A-Level) · Pearson Edexcel · OxfordAQA
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Mini-Tabs Navigation Bar */}
-            <div className="flex bg-slate-800 p-1.5 rounded-xl border border-slate-700">
-              <button
-                type="button"
-                id="tabCorrectionBtn"
-                onClick={() => setExaminerMainTab('correction')}
-                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
-                  examinerMainTab === 'correction'
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                📄 Paper Correction
-              </button>
-              <button
-                type="button"
-                id="tabChatBtn"
-                onClick={() => setExaminerMainTab('chat')}
-                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
-                  examinerMainTab === 'chat'
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                💬 Normal AI Chat
-              </button>
+      {/* =====================================================================
+          TAB 1: PAPER CORRECTION WORKSPACE (Exclusive when examinerMainTab === 'correction')
+         ===================================================================== */}
+      {examinerMainTab === 'correction' && (
+        <section
+          id="sectionCorrection"
+          className="rounded-2xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm"
+        >
+          <div className="bg-slate-900 text-white py-5 px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] uppercase tracking-widest bg-indigo-600 px-2.5 py-1 rounded font-semibold">
+                Forensic OCR &amp; 3-Pass Moderation
+              </span>
+              <h2 className="text-xl sm:text-2xl font-bold mt-2 text-white">
+                AI Principal Examiner — Paper Correction
+              </h2>
+              <p className="text-slate-400 text-xs sm:text-sm mt-0.5">
+                Cambridge (IGCSE / O-Level / AS &amp; A-Level) · Pearson Edexcel · OxfordAQA
+              </p>
             </div>
 
-            {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3">
+              {attachedFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExecuteExaminerAction(
+                      'Evaluate attached documents and generate 14-page annotated PDF report',
+                      true
+                    )
+                  }
+                  disabled={isProcessing}
+                  className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  14-Page Annotated PDF
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() =>
-                  handleExecuteExaminerAction(
-                    'Evaluate attached documents and generate 14-page annotated PDF report',
-                    true
-                  )
-                }
-                disabled={isProcessing}
-                className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
+                onClick={() => setExaminerMainTab('chat')}
+                className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold inline-flex items-center gap-1.5 transition"
               >
-                <Download className="w-3.5 h-3.5" />
-                14-Page Annotated PDF
+                💬 Open Chatbot
               </button>
-            )}
+            </div>
           </div>
-        </div>
 
-        <div className={`p-6 ${isLight ? 'bg-white' : 'bg-[#111827]'}`}>
-          {examinerMainTab === 'correction' ? (
-            <div id="sectionCorrection">
-              <form
-                id="examinerForm"
-                onSubmit={handleRunForensicExaminerAudit}
-                className="space-y-6"
-              >
-                <div className="grid md:grid-cols-2 gap-6">
-                  {/* 1. Student Script Upload */}
-                  <div
-                    className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
-                      isLight
-                        ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
-                        : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
-                    }`}
-                  >
-                    <label className="block cursor-pointer">
-                      <span className="text-sm font-semibold block mb-1">
-                        1. Upload Past Paper / Student Script
-                      </span>
-                      <span className={`text-xs block mb-4 ${mutedText}`}>
-                        PDF or Images (JPG/PNG) — Every page &amp; handwritten note is unpacked for OCR
-                      </span>
-                      <input
-                        type="file"
-                        id="studentScript"
-                        name="studentScript"
-                        multiple
-                        accept=".pdf,image/*"
-                        required={auditScriptFiles.length === 0}
-                        onChange={(e) => {
-                          const files = e.target.files
-                            ? Array.from(e.target.files)
-                            : [];
-                          setAuditScriptFiles(files);
-                          handleFileUpload(e);
-                        }}
-                        className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
-                      />
-                      {auditScriptFiles.length > 0 && (
-                        <div className="mt-2.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
-                          {auditScriptFiles.length} Past Paper / Script file(s) ready:{' '}
-                          {auditScriptFiles.map((f) => f.name).join(', ')}
-                        </div>
-                      )}
-                    </label>
-                  </div>
-
-                  {/* 2. Official Mark Scheme Upload */}
-                  <div
-                    className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
-                      isLight
-                        ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
-                        : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
-                    }`}
-                  >
-                    <label className="block cursor-pointer">
-                      <span className="text-sm font-semibold block mb-1">
-                        2. Upload Official Mark Scheme
-                      </span>
-                      <span className={`text-xs block mb-4 ${mutedText}`}>
-                        PDF or Images (JPG/PNG) — Complete official marking rubric
-                      </span>
-                      <input
-                        type="file"
-                        id="markScheme"
-                        name="markScheme"
-                        multiple
-                        accept=".pdf,image/*"
-                        required={auditSchemeFiles.length === 0}
-                        onChange={(e) => {
-                          const files = e.target.files
-                            ? Array.from(e.target.files)
-                            : [];
-                          setAuditSchemeFiles(files);
-                          handleFileUpload(e);
-                        }}
-                        className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                      />
-                      {auditSchemeFiles.length > 0 && (
-                        <div className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                          {auditSchemeFiles.length} Official Mark Scheme file(s) ready:{' '}
-                          {auditSchemeFiles.map((f) => f.name).join(', ')}
-                        </div>
-                      )}
-                    </label>
-                  </div>
-                </div>
-
-                {/* Pipeline Progress Bar & Controls */}
-                <div className="mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-t border-current/10 pt-4">
-                  <div className="flex items-center gap-3">
-                    {isAuditStreaming && (
-                      <div
-                        id="spinner"
-                        className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0"
-                      />
-                    )}
-                    <p
-                      id="statusText"
-                      className={`text-xs sm:text-sm font-medium ${mutedText}`}
-                    >
-                      {auditStatusText}
-                    </p>
-                  </div>
-                  <button
-                    type="submit"
-                    id="submitBtn"
-                    disabled={isAuditStreaming}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                  >
-                    {isAuditStreaming
-                      ? 'Processing OCR & Grading...'
-                      : 'Extract OCR & Grade Paper'}
-                  </button>
-                </div>
-              </form>
-
-              {/* Output Sub-Tabs (Switch between OCR Transcription & Final Grading Report) */}
-              {auditReportVisible && (
+          <div className={`p-6 space-y-6 ${isLight ? 'bg-white' : 'bg-[#111827]'}`}>
+            <form
+              id="examinerForm"
+              onSubmit={handleRunForensicExaminerAudit}
+              className="space-y-6"
+            >
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* 1. Student Script Upload */}
                 <div
-                  id="resultContainer"
-                  className={`mt-6 rounded-xl border overflow-hidden ${
+                  className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
                     isLight
-                      ? 'bg-white border-slate-200 text-slate-800'
-                      : 'bg-[#090D16] border-white/10 text-slate-100'
+                      ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
+                      : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
                   }`}
                 >
-                  <div
-                    className={`px-6 py-3 border-b flex flex-wrap items-center justify-between gap-3 ${
-                      isLight
-                        ? 'bg-slate-100 border-slate-200'
-                        : 'bg-[#111827] border-white/10'
-                    }`}
-                  >
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        id="subTabReportBtn"
-                        onClick={() => setExaminerSubTab('report')}
-                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                          examinerSubTab === 'report'
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        ✅ Final Moderation Report (Stages 3 &amp; 4)
-                      </button>
-                      <button
-                        type="button"
-                        id="subTabOcrBtn"
-                        onClick={() => setExaminerSubTab('ocr')}
-                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                          examinerSubTab === 'ocr'
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        🔍 Verbatim OCR &amp; Mark Scheme Transcript (Stages 1 &amp; 2)
-                      </button>
-                    </div>
-
-                    <div className="flex gap-2">
-                      {examinerSubTab === 'ocr' && (
-                        <button
-                          type="button"
-                          id="reEvaluateBtn"
-                          disabled={isAuditStreaming}
-                          onClick={() => runEvaluationFromTranscript()}
-                          className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded transition disabled:opacity-50"
-                        >
-                          Re-Grade Edited OCR Transcript
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        id="copyBtn"
-                        onClick={() => {
-                          const textToCopy =
-                            examinerSubTab === 'report'
-                              ? auditRawMarkdown
-                              : auditOcrMarkdown;
-                          navigator.clipboard
-                            .writeText(textToCopy)
-                            .catch(() => {});
-                          setCopiedRawReport(true);
-                          setTimeout(() => setCopiedRawReport(false), 2000);
-                        }}
-                        className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-3 py-1.5 rounded transition"
-                      >
-                        {copiedRawReport ? 'Copied!' : 'Copy Output'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Sub-Tab 1: Final Moderation Report */}
-                  {examinerSubTab === 'report' ? (
-                    <div id="viewReport" className="p-6 sm:p-8">
-                      <div
-                        id="reportOutput"
-                        className="markdown-body leading-relaxed text-sm"
-                        dangerouslySetInnerHTML={{
-                          __html:
-                            auditRenderedHtml ||
-                            '<p class="text-slate-400 italic">Waiting for Step 1 OCR transcription to complete before streaming Step 2 Moderation Report...</p>',
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    /* Sub-Tab 2: Verbatim OCR Transcript (Editable & Inspectable) */
-                    <div
-                      id="viewOcr"
-                      className={`p-6 sm:p-8 ${
-                        isLight ? 'bg-slate-50' : 'bg-[#090D16]'
-                      }`}
-                    >
-                      <p className={`text-xs mb-3 ${mutedText}`}>
-                        Below is the raw 100% verbatim OCR transcription of the
-                        student&apos;s handwriting, annotations, and mark scheme.
-                        You can inspect or edit any character and click{' '}
-                        <strong>&quot;Re-Grade Edited OCR Transcript&quot;</strong>{' '}
-                        above.
-                      </p>
-                      <textarea
-                        id="ocrTextarea"
-                        rows={18}
-                        value={auditOcrMarkdown}
-                        onChange={(e) => setAuditOcrMarkdown(e.target.value)}
-                        className={`w-full font-mono text-xs p-4 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-6 ${
-                          isLight
-                            ? 'border-slate-300 bg-white text-slate-800'
-                            : 'border-white/15 bg-[#111827] text-slate-100'
-                        }`}
-                        placeholder="OCR transcription will stream here..."
-                      />
-                      <h3 className="text-sm font-bold mb-2">
-                        Formatted OCR Preview:
-                      </h3>
-                      <div
-                        id="ocrOutput"
-                        className={`markdown-body p-6 rounded-lg border text-sm ${
-                          isLight
-                            ? 'bg-white border-slate-200 text-slate-800'
-                            : 'bg-[#111827] border-white/10 text-slate-100'
-                        }`}
-                        dangerouslySetInnerHTML={{
-                          __html: String(marked.parse(auditOcrMarkdown || '')),
-                        }}
-                      />
-                    </div>
-                  )}
+                  <label className="block cursor-pointer">
+                    <span className="text-sm font-semibold block mb-1">
+                      1. Upload Past Paper / Student Script
+                    </span>
+                    <span className={`text-xs block mb-4 ${mutedText}`}>
+                      PDF or Images (JPG/PNG) — Every page &amp; handwritten note is unpacked for OCR
+                    </span>
+                    <input
+                      type="file"
+                      id="studentScript"
+                      name="studentScript"
+                      multiple
+                      accept=".pdf,image/*"
+                      required={auditScriptFiles.length === 0}
+                      onChange={(e) => {
+                        const files = e.target.files
+                          ? Array.from(e.target.files)
+                          : [];
+                        setAuditScriptFiles(files);
+                        handleFileUpload(e);
+                      }}
+                      className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                    />
+                    {auditScriptFiles.length > 0 && (
+                      <div className="mt-2.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                        {auditScriptFiles.length} Past Paper / Script file(s) ready:{' '}
+                        {auditScriptFiles.map((f) => f.name).join(', ')}
+                      </div>
+                    )}
+                  </label>
                 </div>
-              )}
-            </div>
-          ) : (
-            /* SECTION 2: NORMAL AI CHAT TAB */
-            <div id="sectionChat">
+
+                {/* 2. Official Mark Scheme Upload */}
+                <div
+                  className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
+                    isLight
+                      ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
+                      : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
+                  }`}
+                >
+                  <label className="block cursor-pointer">
+                    <span className="text-sm font-semibold block mb-1">
+                      2. Upload Official Mark Scheme
+                    </span>
+                    <span className={`text-xs block mb-4 ${mutedText}`}>
+                      PDF or Images (JPG/PNG) — Complete official marking rubric
+                    </span>
+                    <input
+                      type="file"
+                      id="markScheme"
+                      name="markScheme"
+                      multiple
+                      accept=".pdf,image/*"
+                      required={auditSchemeFiles.length === 0}
+                      onChange={(e) => {
+                        const files = e.target.files
+                          ? Array.from(e.target.files)
+                          : [];
+                        setAuditSchemeFiles(files);
+                        handleFileUpload(e);
+                      }}
+                      className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
+                    />
+                    {auditSchemeFiles.length > 0 && (
+                      <div className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        {auditSchemeFiles.length} Official Mark Scheme file(s) ready:{' '}
+                        {auditSchemeFiles.map((f) => f.name).join(', ')}
+                      </div>
+                    )}
+                  </label>
+                </div>
+              </div>
+
+              {/* Pipeline Progress Bar & Controls */}
+              <div className="mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-t border-current/10 pt-4">
+                <div className="flex items-center gap-3">
+                  {isAuditStreaming && (
+                    <div
+                      id="spinner"
+                      className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0"
+                    />
+                  )}
+                  <p
+                    id="statusText"
+                    className={`text-xs sm:text-sm font-medium ${mutedText}`}
+                  >
+                    {auditStatusText}
+                  </p>
+                </div>
+                <button
+                  type="submit"
+                  id="submitBtn"
+                  disabled={isAuditStreaming}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                >
+                  {isAuditStreaming
+                    ? 'Processing OCR & Grading...'
+                    : 'Extract OCR & Grade Paper'}
+                </button>
+              </div>
+            </form>
+
+            {/* Output Sub-Tabs (Switch between OCR Transcription & Final Grading Report) */}
+            {auditReportVisible && (
               <div
-                className={`rounded-xl border flex flex-col h-[580px] overflow-hidden ${
+                id="resultContainer"
+                className={`mt-6 rounded-xl border overflow-hidden ${
                   isLight
-                    ? 'bg-white border-slate-200'
-                    : 'bg-[#090D16] border-white/10'
+                    ? 'bg-white border-slate-200 text-slate-800'
+                    : 'bg-[#090D16] border-white/10 text-slate-100'
                 }`}
               >
                 <div
-                  className={`px-6 py-4 border-b flex items-center justify-between ${
+                  className={`px-6 py-3 border-b flex flex-wrap items-center justify-between gap-3 ${
                     isLight
                       ? 'bg-slate-100 border-slate-200'
                       : 'bg-[#111827] border-white/10'
                   }`}
                 >
-                  <div>
-                    <h3 className="text-base font-bold">
-                      AI Examiner &amp; Study Chat
-                    </h3>
-                    <p className={`text-xs ${mutedText}`}>
-                      Ask general subject questions or discuss the paper you just
-                      graded in the Paper Correction tab.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPortalChatMessages([
-                        {
-                          id: `clear-${Date.now()}`,
-                          role: 'assistant',
-                          content: 'Chat history cleared. Ask me anything!',
-                        },
-                      ])
-                    }
-                    className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 font-semibold px-3 py-1.5 rounded"
-                  >
-                    Clear Chat
-                  </button>
-                </div>
-
-                <div
-                  id="chatMessages"
-                  className={`flex-1 p-6 overflow-y-auto space-y-4 ${
-                    isLight ? 'bg-slate-50' : 'bg-[#090D16]'
-                  }`}
-                >
-                  {portalChatMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={
-                        msg.role === 'user'
-                          ? 'flex justify-end'
-                          : 'flex justify-start'
-                      }
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      id="subTabReportBtn"
+                      onClick={() => setExaminerSubTab('report')}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                        examinerSubTab === 'report'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                      }`}
                     >
-                      <div
-                        className={
-                          msg.role === 'user'
-                            ? 'max-w-2xl bg-indigo-600 text-white rounded-2xl rounded-tr-none px-4 py-3 text-sm shadow-sm'
-                            : `max-w-2xl border rounded-2xl rounded-tl-none px-4 py-3 text-sm shadow-sm markdown-body ${
-                                isLight
-                                  ? 'bg-white border-slate-200 text-slate-800'
-                                  : 'bg-[#111827] border-white/10 text-slate-100'
-                              }`
-                        }
-                        dangerouslySetInnerHTML={{
-                          __html:
-                            msg.role === 'user'
-                              ? msg.content
-                              : String(marked.parse(msg.content || '')),
-                        }}
-                      />
-                    </div>
-                  ))}
-                  <div ref={portalChatEndRef} />
+                      ✅ Final Moderation Report (Stages 3 &amp; 4)
+                    </button>
+                    <button
+                      type="button"
+                      id="subTabOcrBtn"
+                      onClick={() => setExaminerSubTab('ocr')}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                        examinerSubTab === 'ocr'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      🔍 Verbatim OCR &amp; Mark Scheme Transcript (Stages 1 &amp; 2)
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {examinerSubTab === 'ocr' && (
+                      <button
+                        type="button"
+                        id="reEvaluateBtn"
+                        disabled={isAuditStreaming}
+                        onClick={() => runEvaluationFromTranscript()}
+                        className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded transition disabled:opacity-50"
+                      >
+                        Re-Grade Edited OCR Transcript
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      id="copyBtn"
+                      onClick={() => {
+                        const textToCopy =
+                          examinerSubTab === 'report'
+                            ? auditRawMarkdown
+                            : auditOcrMarkdown;
+                        navigator.clipboard
+                          .writeText(textToCopy)
+                          .catch(() => {});
+                        setCopiedRawReport(true);
+                        setTimeout(() => setCopiedRawReport(false), 2000);
+                      }}
+                      className="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-3 py-1.5 rounded transition"
+                    >
+                      {copiedRawReport ? 'Copied!' : 'Copy Output'}
+                    </button>
+                  </div>
                 </div>
 
-                <form
-                  id="chatForm"
-                  onSubmit={handleSendPortalChat}
-                  className={`p-4 border-t flex gap-3 ${
-                    isLight
-                      ? 'bg-white border-slate-200'
-                      : 'bg-[#111827] border-white/10'
-                  }`}
-                >
-                  <input
-                    type="text"
-                    id="chatInput"
-                    value={portalChatInput}
-                    onChange={(e) => setPortalChatInput(e.target.value)}
-                    placeholder="Ask a question about a question, mark scheme, or topic..."
-                    required
-                    className={`flex-1 px-4 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                      isLight
-                        ? 'border-slate-300 bg-white text-slate-900'
-                        : 'border-white/15 bg-[#090D16] text-white'
+                {/* Sub-Tab 1: Final Moderation Report */}
+                {examinerSubTab === 'report' ? (
+                  <div id="viewReport" className="p-6 sm:p-8">
+                    <div
+                      id="reportOutput"
+                      className="markdown-body leading-relaxed text-sm"
+                      dangerouslySetInnerHTML={{
+                        __html:
+                          auditRenderedHtml ||
+                          '<p class="text-slate-400 italic">Waiting for Step 1 OCR transcription to complete before streaming Step 2 Moderation Report...</p>',
+                      }}
+                    />
+                  </div>
+                ) : (
+                  /* Sub-Tab 2: Verbatim OCR Transcript (Editable & Inspectable) */
+                  <div
+                    id="viewOcr"
+                    className={`p-6 sm:p-8 ${
+                      isLight ? 'bg-slate-50' : 'bg-[#090D16]'
                     }`}
-                  />
-                  <button
-                    type="submit"
-                    id="chatSendBtn"
-                    disabled={isPortalChatStreaming}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm shadow transition disabled:opacity-50"
                   >
-                    Send
-                  </button>
-                </form>
+                    <p className={`text-xs mb-3 ${mutedText}`}>
+                      Below is the raw 100% verbatim OCR transcription of the
+                      student&apos;s handwriting, annotations, and mark scheme.
+                      You can inspect or edit any character and click{' '}
+                      <strong>&quot;Re-Grade Edited OCR Transcript&quot;</strong>{' '}
+                      above.
+                    </p>
+                    <textarea
+                      id="ocrTextarea"
+                      rows={18}
+                      value={auditOcrMarkdown}
+                      onChange={(e) => setAuditOcrMarkdown(e.target.value)}
+                      className={`w-full font-mono text-xs p-4 rounded-lg border focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-6 ${
+                        isLight
+                          ? 'border-slate-300 bg-white text-slate-800'
+                          : 'border-white/15 bg-[#111827] text-slate-100'
+                      }`}
+                      placeholder="OCR transcription will stream here..."
+                    />
+                    <h3 className="text-sm font-bold mb-2">
+                      Formatted OCR Preview:
+                    </h3>
+                    <div
+                      id="ocrOutput"
+                      className={`markdown-body p-6 rounded-lg border text-sm ${
+                        isLight
+                          ? 'bg-white border-slate-200 text-slate-800'
+                          : 'bg-[#111827] border-white/10 text-slate-100'
+                      }`}
+                      dangerouslySetInnerHTML={{
+                        __html: String(marked.parse(auditOcrMarkdown || '')),
+                      }}
+                    />
+                  </div>
+                )}
               </div>
-            </div>
-          )}
-        </div>
-      </section>
+            )}
 
-      {/* Main 3-Column Workspace matching reference image */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch min-h-[640px]">
-        {/* COLUMN 1: HISTORY PANEL (2 cols when visible) */}
-        {!sidebarHidden && (
-          <aside
-            className={`lg:col-span-2 rounded-2xl border p-4 flex flex-col justify-between ${cardSurface}`}
-          >
-            <div className="space-y-3">
-              <div className="flex items-center justify-between pb-2.5 border-b border-current/10">
-                <span
-                  className={`text-[11px] font-bold tracking-wider uppercase flex items-center gap-1.5 ${mutedText}`}
-                >
-                  <History className="w-3.5 h-3.5" />
-                  HISTORY
-                </span>
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono-tabular font-semibold ${
-                    isLight
-                      ? 'bg-slate-100 text-slate-700'
-                      : 'bg-white/10 text-slate-300'
-                  }`}
-                >
-                  {sessions.length}
-                </span>
+            {/* If 14-Page Annotated PDF generation is running or completed, display inside Paper Correction tab */}
+            {isProcessing && (
+              <div
+                id="examiner-live-working-card-correction"
+                className={`rounded-2xl border p-4 sm:p-5 space-y-3.5 transition-all ${
+                  isLight
+                    ? 'bg-[#F8FAFC] border-indigo-200 text-[#0F172A] shadow-sm'
+                    : 'bg-[#090D16] border-[#6366F1]/40 text-white shadow-sm'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-[#17365D] text-white flex items-center justify-center shrink-0">
+                      <Loader2 className="w-4 h-4 animate-spin text-[#70E0A0]" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold font-mono-tabular uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                        {WORKING_STAGES[workingStageIndex].badge}
+                      </div>
+                      <div className="text-xs sm:text-sm font-bold">
+                        AI Principal Examiner is building your 14-page Annotated PDF...
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg border border-current/15 text-[11px] font-mono-tabular font-semibold shrink-0">
+                    {workingElapsedSec}s elapsed
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium">
+                    {WORKING_STAGES[workingStageIndex].title}
+                  </div>
+                  <div className={`text-[11px] ${mutedText}`}>
+                    {WORKING_STAGES[workingStageIndex].detail}
+                  </div>
+                </div>
               </div>
+            )}
+
+            {activeSession.messages
+              .filter((m) => Boolean(m.evaluation))
+              .map((msg) => (
+                <div
+                  key={`corr-eval-${msg.id}`}
+                  className={`rounded-2xl border overflow-hidden shadow-sm ${cardSurface}`}
+                >
+                  <div className="bg-[#17365D] text-white p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-white/15 text-[10px] font-mono-tabular font-bold uppercase tracking-wider">
+                          {msg.evaluation!.board}
+                        </span>
+                        <span className="text-xs sm:text-sm font-bold tracking-tight">
+                          {msg.evaluation!.subject} —{' '}
+                          {msg.evaluation!.paperComponent}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-200 flex flex-wrap items-center gap-3 font-mono-tabular">
+                        <span>
+                          FINAL SCORE:{' '}
+                          <strong className="text-white">
+                            {msg.evaluation!.totalAwarded}/
+                            {msg.evaluation!.totalAvailable} (
+                            {msg.evaluation!.percentage}%)
+                          </strong>
+                        </span>
+                        <span>•</span>
+                        <span>
+                          PROVISIONAL GRADE (2026):{' '}
+                          <strong className="text-[#70E0A0]">
+                            {msg.evaluation!.provisionalGrade}
+                          </strong>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePreviewAnnotatedPdf(msg.evaluation!)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-[#70E0A0]" />
+                        Preview Annotated PDF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadAnnotatedPdf(msg.evaluation!)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#70E0A0] hover:bg-[#5cd48f] text-[#0F172A] transition-all shadow-xs"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download PDF
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
+
+      {/* =====================================================================
+          TAB 2: CHATBOT WORKSPACE (Exclusive when examinerMainTab === 'chat')
+         ===================================================================== */}
+      {examinerMainTab === 'chat' && (
+        <div id="sectionChat" className="space-y-5">
+          {/* 3-Column Multi-Session Study Tutor & Document Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch min-h-[640px]">
+            {/* COLUMN 1: HISTORY PANEL (2 cols when visible) */}
+            {!sidebarHidden && (
+              <aside
+                className={`lg:col-span-2 rounded-2xl border p-4 flex flex-col justify-between ${cardSurface}`}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-2.5 border-b border-current/10">
+                    <span
+                      className={`text-[11px] font-bold tracking-wider uppercase flex items-center gap-1.5 ${mutedText}`}
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      HISTORY
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono-tabular font-semibold ${
+                        isLight
+                          ? 'bg-slate-100 text-slate-700'
+                          : 'bg-white/10 text-slate-300'
+                      }`}
+                    >
+                      {sessions.length}
+                    </span>
+                  </div>
 
               <button
                 type="button"
@@ -3204,6 +3143,8 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
           </div>
         </section>
       </div>
+        </div>
+      )}
 
       {/* Direct Text Paste Modal */}
       {showPasteModal && (
