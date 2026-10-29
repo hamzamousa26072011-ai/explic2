@@ -206,6 +206,36 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       );
   };
 
+  const renderExaminerAnswerWithKeyPoints = (rawText: string) => {
+    let text = String(rawText || '');
+    // Convert highlight markers first
+    text = text.replace(
+      /==([^=]+)==/g,
+      '<mark class="key-point-highlight">$1</mark>'
+    );
+
+    let html = String(marked.parse(text));
+    html = formatHighlights(html);
+
+    // Highlight key points, core definitions, and marking points in vibrant yellow highlighter style
+    html = html.replace(
+      /<strong>(.*?)<\/strong>/gi,
+      '<mark class="key-point-highlight">$1</mark>'
+    );
+    html = html.replace(
+      /<b>(.*?)<\/b>/gi,
+      '<mark class="key-point-highlight">$1</mark>'
+    );
+
+    // Also highlight labels like "Key Point:", "Mark Scheme Point:", "Definition:", "Formula:"
+    html = html.replace(
+      /(Key Points?|Marking Points?|Definition|Key Terms?|Formula|Units?):/gi,
+      '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-950 dark:bg-amber-950/70 dark:text-amber-200 font-extrabold px-1.5 py-0.5 rounded border border-amber-300 dark:border-amber-700 text-[11px] uppercase tracking-wide mr-1">🎯 $1:</span>'
+    );
+
+    return html;
+  };
+
   const readSSEStream = async (
     response: Response,
     onTextChunk: (chunkText: string) => void
@@ -1983,11 +2013,6 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               <div className="space-y-6">
                 {activeSession.messages.map((msg) => {
                   const isUser = msg.role === 'user';
-                  const cleanParagraphs = String(msg.text || '')
-                    .replace(/\*\*([^*]+)\*\*/g, '$1')
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter(Boolean);
 
                   return (
                     <div key={msg.id} className="space-y-3.5">
@@ -2032,47 +2057,23 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                           </div>
                         )}
 
-                        <div className="space-y-2 text-xs sm:text-[13px] leading-relaxed">
-                          {cleanParagraphs.map((line, lIdx) => {
-                            const isHeading =
-                              line.startsWith('#') ||
-                              /^(?:Pass \d|Output [A-D]|Summary|Key Points|Lost Marks|Model Answer)/i.test(
-                                line
-                              );
-                            const isBullet =
-                              line.startsWith('- ') ||
-                              line.startsWith('• ') ||
-                              /^\d+\.\s/.test(line);
-                            const cleanedLine = line.replace(/^#+\s*/, '');
-
-                            if (isHeading) {
-                              return (
-                                <div
-                                  key={lIdx}
-                                  className="font-bold text-xs sm:text-sm pt-1 first:pt-0 tracking-tight"
-                                >
-                                  {cleanedLine}
-                                </div>
-                              );
-                            }
-                            if (isBullet) {
-                              return (
-                                <div
-                                  key={lIdx}
-                                  className="flex items-start gap-2 pl-1"
-                                >
-                                  <span className="text-indigo-500 font-bold mt-0.5">
-                                    •
-                                  </span>
-                                  <span>
-                                    {cleanedLine.replace(/^(?:[-•]|\d+\.)\s*/, '')}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            return <p key={lIdx}>{cleanedLine}</p>;
-                          })}
-                        </div>
+                        {isUser ? (
+                          <div className="space-y-2 text-xs sm:text-[13px] leading-relaxed text-white">
+                            {String(msg.text || '')
+                              .split('\n')
+                              .filter(Boolean)
+                              .map((line, lIdx) => (
+                                <p key={lIdx}>{line}</p>
+                              ))}
+                          </div>
+                        ) : (
+                          <div
+                            className="markdown-body text-xs sm:text-[13px] leading-relaxed space-y-2.5 text-slate-800 dark:text-slate-100"
+                            dangerouslySetInnerHTML={{
+                              __html: renderExaminerAnswerWithKeyPoints(msg.text),
+                            }}
+                          />
+                        )}
                       </div>
 
                       {/* If message includes a 3-Pass Examiner Evaluation, render the structured 4-Output Studio */}
@@ -2879,20 +2880,36 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 {isProcessing && (
                   <div
                     id="examiner-live-working-card"
-                    className={`rounded-2xl border p-4 transition-all max-w-xs flex items-center gap-3 shadow-xs ${
-                      isLight
-                        ? 'bg-white border-slate-200 text-black'
-                        : 'bg-[#111827] border-white/10 text-white'
-                    }`}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      borderColor: '#cbd5e1',
+                      color: '#000000',
+                    }}
+                    className="rounded-2xl border p-4 transition-all max-w-xs flex items-center gap-3 shadow-sm !text-black"
                   >
-                    <div className="w-8 h-8 rounded-xl bg-slate-900/10 text-black dark:text-white flex items-center justify-center shrink-0">
-                      <Loader2 className="w-4 h-4 animate-spin text-black dark:text-white" />
+                    <div
+                      style={{
+                        backgroundColor: '#f1f5f9',
+                        color: '#000000',
+                      }}
+                      className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 !text-black"
+                    >
+                      <Loader2
+                        style={{ color: '#000000' }}
+                        className="w-4 h-4 animate-spin !text-black"
+                      />
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-black dark:text-white">
+                      <span
+                        style={{ color: '#000000' }}
+                        className="text-sm font-bold !text-black tracking-tight"
+                      >
                         Thinking...
                       </span>
-                      <span className="text-xs font-mono-tabular font-semibold text-black/75 dark:text-white/75">
+                      <span
+                        style={{ color: '#000000' }}
+                        className="text-xs font-mono-tabular font-bold !text-black"
+                      >
                         ({workingElapsedSec}s)
                       </span>
                     </div>
@@ -2909,19 +2926,29 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
             {/* Compact Live Status Pill when AI is working */}
             {isProcessing && (
               <div
-                className={`px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 ${
-                  isLight
-                    ? 'bg-white border-slate-300 text-black shadow-xs'
-                    : 'bg-[#111827] border-white/20 text-white'
-                }`}
+                style={{
+                  backgroundColor: '#ffffff',
+                  borderColor: '#cbd5e1',
+                  color: '#000000',
+                }}
+                className="px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-2 shadow-xs !text-black"
               >
                 <div className="flex items-center gap-2 truncate">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-black dark:text-white shrink-0" />
-                  <span className="font-bold truncate text-black dark:text-white">
+                  <Loader2
+                    style={{ color: '#000000' }}
+                    className="w-3.5 h-3.5 animate-spin shrink-0 !text-black"
+                  />
+                  <span
+                    style={{ color: '#000000' }}
+                    className="font-bold truncate !text-black"
+                  >
                     Thinking...
                   </span>
                 </div>
-                <span className="text-[11px] font-mono-tabular font-bold shrink-0 text-black/80 dark:text-white/80">
+                <span
+                  style={{ color: '#000000' }}
+                  className="text-[11px] font-mono-tabular font-bold shrink-0 !text-black"
+                >
                   {workingElapsedSec}s
                 </span>
               </div>

@@ -215,3 +215,15 @@
   margin: 1rem 0;
 }
 
+.markdown-body mark,
+.key-point-highlight {
+  background-color: #fef08a !important;
+  color: #0f172a !important;
+  font-weight: 700 !important;
+  padding: 0.12rem 0.35rem !important;
+  border-radius: 0.25rem !important;
+  border: 1px solid #facc15 !important;
+  display: inline !important;
+}
+
+
