@@ -194,7 +194,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
   const SITE_KEY = 'key_ps5gnQ9rlp4xSCl6';
 
-  const [examMeta, setExamMeta] = useState('CAIE IGCSE Physics (0625) Paper 42');
+  const [examMeta, setExamMeta] = useState('CAIE IGCSE Physics Paper 42');
   const [examSession, setExamSession] = useState('May/June 2026 Variant 2');
   const [examinerProvider, setExaminerProvider] = useState<
     'deepseek' | 'openai' | 'gemini'
@@ -384,9 +384,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     setAuditRenderedHtml('');
     setExaminerSubTab('report');
     setIsAuditStreaming(true);
-    setAuditStatusText(
-      'Step 2/2: Comparing OCR Transcription against Mark Scheme (3-Pass Moderation)...'
-    );
+    setAuditStatusText('Correcting your paper..');
 
     try {
       const evalRes = await fetch('/api/evaluate-transcript', {
@@ -517,9 +515,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
       // 2. Run Step 1: Forensic OCR & Mark Scheme Transcription
       setExaminerSubTab('ocr');
-      setAuditStatusText(
-        'Step 1/2: Running Forensic OCR on all pages (extracting handwriting, working & mark scheme)...'
-      );
+      setAuditStatusText('Correcting your paper..');
 
       const ocrRes = await fetch('/api/ocr-extract', {
         method: 'POST',
@@ -1321,7 +1317,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                     type="text"
                     value={examMeta}
                     onChange={(e) => setExamMeta(e.target.value)}
-                    placeholder="e.g., CAIE IGCSE Physics (0625) Paper 42"
+                    placeholder="e.g., CAIE IGCSE Physics Paper 42"
                     className={`w-full rounded-lg border px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${
                       isLight
                         ? 'bg-slate-50 border-slate-300 text-slate-800'

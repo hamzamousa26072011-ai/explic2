@@ -619,7 +619,7 @@ Evaluate the student's transcribed script from Stage 1 strictly against the extr
 # STAGE 4 — REQUIRED 4-DELIVERABLE OUTPUT STRUCTURE
 
 ## Deliverable 1: Executive Summary & Breakdown Table
-- **Header Banner**: Examination Board, Qualification, Subject, Paper Code/Component, Total Marks Awarded (\`X / Y\`), Percentage (\`Z%\`), and Provisional Grade (\`A* / A / B / C / 9–1\`).
+- **Header Banner**: Examination Board, Qualification, Subject, Paper Component, Total Marks Awarded (X / Y), Percentage (Z%), and Provisional Grade (A* / A / B / C / 9–1). (Do NOT include syllabus codes or subject codes).
 - **Question-by-Question Breakdown Table**:
   Columns: \`Question\` | \`Topic / Task\` | \`Student Key Evidence\` | \`Mark Scheme Breakdown\` | \`Score (Awarded / Max)\`.
 - **Examiner's Overview**: High-level synthesis of script performance, precision, and technique.
@@ -656,7 +656,7 @@ Core priorities: marking accuracy, defensible mark allocation, precise PDF align
 
 SOURCE VERIFICATION & DOCUMENT EXTRACTION
 Before marking:
-- Identify the examination board, subject, syllabus/specification code, paper number, component, variant, examination session, and maximum available marks.
+- Identify the examination board, subject, paper number, component, variant, examination session, and maximum available marks. Do not request or output syllabus or subject codes.
 - Examine all supplied files: Question Paper, Mark Scheme, and student's completed submission.
 - Determine the page dimensions, orientation, page count, rotation, coordinate system, and scan quality of the student's PDF.
 - Extract printed text, handwritten responses, equations, diagrams, tables, units, numerical substitutions, and working using multiple complementary OCR and visual-inspection passes.
@@ -1069,7 +1069,7 @@ Evaluate the student's transcribed script from Stage 1 strictly against the extr
 # STAGE 4 — REQUIRED 4-DELIVERABLE OUTPUT STRUCTURE
 
 ## Deliverable 1: Executive Summary & Breakdown Table
-- **Header Banner**: Examination Board, Qualification, Subject, Paper Code/Component, Total Marks Awarded (\`X / Y\`), Percentage (\`Z%\`), and Provisional Grade (\`A* / A / B / C / 9–1\`).
+- **Header Banner**: Examination Board, Qualification, Subject, Paper Component, Total Marks Awarded (X / Y), Percentage (Z%), and Provisional Grade (A* / A / B / C / 9–1). (Do NOT include syllabus codes or subject codes).
 - **Question-by-Question Breakdown Table**:
   Columns: \`Question\` | \`Topic / Task\` | \`Student Key Evidence\` | \`Mark Scheme Breakdown\` | \`Score (Awarded / Max)\`.
 - **Examiner's Overview**: High-level synthesis of script performance, precision, and technique.

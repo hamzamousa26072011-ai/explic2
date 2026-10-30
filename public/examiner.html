@@ -8,10 +8,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Marked.js for Markdown Tables & Report Rendering -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- PDF.js for reading uploaded PDFs (QP, MS, and Scanned Scripts) -->
+  <!-- PDF.js for reading uploaded PDFs & converting scanned pages for Vision -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <!-- Tesseract.js for OCR on Scanned Scripts / Handwritten Images -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <style>
     .examiner-output h2 {
@@ -103,7 +101,7 @@
       </div>
 
       <div class="bg-white border border-t-0 border-slate-200 rounded-b-2xl p-6 shadow-sm">
-        <!-- File Upload Slots -->
+        <!-- File Upload Slots ONLY -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           
           <!-- Slot 1: Question Paper & Mark Scheme File Upload -->
@@ -157,14 +155,14 @@
     </div>
 
     <!-- ================================================================= -->
-    <!-- VIEW 2: AI EXAMINER CHATBOT (CONNECTED TO DEEPSEEK & GEMINI)      -->
+    <!-- VIEW 2: AI EXAMINER CHATBOT                                       -->
     <!-- ================================================================= -->
     <div id="chatView" class="hidden">
       <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[560px]">
         <div class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
           <div>
             <h2 class="text-base font-bold">Principal Examiner & Senior Moderator Chatbot</h2>
-            <p class="text-xs text-slate-300">Ask mark scheme questions, definitions, or upload a snippet</p>
+            <p class="text-xs text-slate-300">Ask mark scheme questions or definitions</p>
           </div>
           <button onclick="clearChat()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg">
             Clear Chat
@@ -196,10 +194,11 @@
 
   <script>
     // =========================================================================
-    // API CONFIGURATION (DIRECT DEEPSEEK + SEAMLESS SERVER PROXY FAILOVER)
+    // API CONFIGURATION (OPENAI GPT-4o VISION + RESILIENT SERVER PROXY)
     // =========================================================================
-    const DEEPSEEK_API_KEY = window.DEEPSEEK_KEY || ['sk-', 'ff86ed14fc', '60428facee', 'ec49d5352ade'].join('');
-    const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
+    const OPENAI_API_KEY = window.OPENAI_API_KEY || ['sk-', 'ff86ed14fc', '60428facee', 'ec49d5352ade'].join('');
+    const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+    const OPENAI_MODEL = "gpt-4o";
     const BACKEND_EXAMINER_ENDPOINT = "/api/examiner";
 
     // Configure PDF.js Worker
@@ -207,6 +206,7 @@
       pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
     }
 
+    // SYSTEM PROMPT — NO SYLLABUS CODE OR SUBJECT CODE
     const EXAMINER_SYSTEM_PROMPT = `# ROLE & PROFESSIONAL AUTHORITY
 You are an elite Principal Examiner, Chief Assessment Moderator, and Forensic Handwriting Transcription Specialist for international examination boards, specifically:
 - Cambridge Assessment International Education (CAIE: IGCSE, O-Level, AS & A-Level)
@@ -222,6 +222,7 @@ Your mandate is to examine a student's completed past paper or script strictly a
 2. Clean Mathematical & Scientific Notation: NEVER use raw LaTeX syntax or dollar-sign enclosures ($ or $$). Write all formulas, units, and values in clean, readable text (e.g., "E = W / Q", "Δθ = 14.5 °C", "ρ = 2.70 g/cm³").
 3. Decisive Ticks (✓) and Crosses (✗): Every mark allocated or withheld must be tied to a distinct marking point (e.g., M1, A1, B1, C1, or Level/Band criteria).
 4. Error Carried Forward (ECF): If a calculation error occurs in an earlier part (e.g., 2(a)), verify whether subsequent parts (2(b), 2(c)) use that incorrect value correctly. Award full method/working marks where permitted by board conventions.
+5. NO SYLLABUS CODES: Do not request, require, or output syllabus codes or subject codes anywhere in the report.
 
 ---
 
@@ -230,7 +231,7 @@ Your mandate is to examine a student's completed past paper or script strictly a
 Output your complete evaluation using the four sections below:
 
 ## 1. Executive Summary & Mark Ledger
-- Header: Examination Board | Subject & Code | Paper Component | Session
+- Header: Examination Board | Subject | Paper Component | Session
 - Score Summary: Total Awarded / Maximum Available (Percentage %) | Provisional Grade (e.g., A*, A, B, 9–1)
 - Ledger Table:
   | Question | Topic / Focus | Student Evidence | Mark Scheme Criteria | Score |
@@ -298,74 +299,67 @@ A clean, scannable briefing designed for quick messaging to a student or parent:
       badge.textContent = `${files.length} file(s) attached (${names})`;
     }
 
-    // =========================================================================
-    // FILE & SCANNED PDF / IMAGE EXTRACTION (SOLVES OCR EXTRACTION ERROR)
-    // =========================================================================
-    async function extractTextFromSingleFile(file) {
-      const name = file.name.toLowerCase();
-
-      // 1. Plain text files
-      if (name.endsWith(".txt")) {
-        return await file.text();
-      }
-
-      // 2. Image files -> OCR with Tesseract
-      if (file.type.startsWith("image/") && window.Tesseract) {
-        try {
-          const result = await Tesseract.recognize(file, "eng");
-          return `\n--- [File: ${file.name}] ---\n` + (result?.data?.text || "");
-        } catch (e) {
-          return `\n--- [Image: ${file.name}] ---\n`;
-        }
-      }
-
-      // 3. PDF files -> Extract embedded text first; if scanned/empty page, run OCR on rendered canvas
-      if (name.endsWith(".pdf") && window.pdfjsLib) {
-        try {
-          const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          let fullText = `\n--- [PDF: ${file.name} (${pdf.numPages} pages)] ---\n`;
-
-          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-            const page = await pdf.getPage(pageNum);
-            const textContent = await page.getTextContent();
-            const extractedPageText = textContent.items.map(item => item.str).join(" ").trim();
-
-            if (extractedPageText.length > 25) {
-              // Digital PDF page (e.g. Official Mark Scheme / QP)
-              fullText += `\n[Page ${pageNum}]\n${extractedPageText}\n`;
-            } else if (window.Tesseract) {
-              // Scanned PDF page (e.g. Scanned handwritten script) -> Render page to canvas & OCR
-              const viewport = page.getViewport({ scale: 1.75 });
-              const canvas = document.createElement("canvas");
-              const ctx = canvas.getContext("2d");
-              canvas.width = viewport.width;
-              canvas.height = viewport.height;
-              await page.render({ canvasContext: ctx, viewport }).promise;
-
-              const ocrResult = await Tesseract.recognize(canvas, "eng");
-              fullText += `\n[Page ${pageNum} (Scanned Script OCR)]\n${ocrResult?.data?.text || ""}\n`;
-            }
-          }
-          return fullText;
-        } catch (pdfErr) {
-          return `\n--- [PDF: ${file.name}] ---\n`;
-        }
-      }
-
-      return "";
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
     }
 
-    async function extractAllFiles(fileList) {
-      let combined = "";
+    // =========================================================================
+    // PROCESS UPLOADED FILES FOR VISION & EXTRACTION
+    // =========================================================================
+    async function processFilesForOpenAI(fileList, label) {
+      let extractedText = "";
+      const visionImages = [];
+
       for (const file of Array.from(fileList)) {
-        combined += (await extractTextFromSingleFile(file)) + "\n";
+        const lower = file.name.toLowerCase();
+
+        if (lower.endsWith(".txt")) {
+          const text = await file.text();
+          extractedText += `\n--- [${label}: ${file.name}] ---\n${text}\n`;
+        } else if (file.type.startsWith("image/")) {
+          const dataUrl = await fileToDataURL(file);
+          visionImages.push(dataUrl);
+        } else if (lower.endsWith(".pdf") && window.pdfjsLib) {
+          try {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            extractedText += `\n--- [${label} PDF: ${file.name} (${pdf.numPages} pages)] ---\n`;
+
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+              const page = await pdf.getPage(pageNum);
+              const textContent = await page.getTextContent();
+              const pageText = textContent.items.map(item => item.str).join(" ").trim();
+
+              if (pageText.length > 30) {
+                // Digital text PDF (e.g., Official Mark Scheme)
+                extractedText += `\n[Page ${pageNum}]\n${pageText}\n`;
+              } else {
+                // Scanned / Handwritten PDF page -> Render to image for Vision
+                const viewport = page.getViewport({ scale: 1.6 });
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                await page.render({ canvasContext: ctx, viewport }).promise;
+                visionImages.push(canvas.toDataURL("image/jpeg", 0.85));
+              }
+            }
+          } catch (e) {
+            extractedText += `\n--- [${label} PDF: ${file.name}] ---\n`;
+          }
+        }
       }
-      return combined.trim();
+
+      return { extractedText, visionImages };
     }
 
     // =========================================================================
-    // PAPER CORRECTION EXECUTION (DEEPSEEK API + RESILIENT BACKEND STREAM FALLBACK)
+    // PAPER CORRECTION EXECUTION
     // =========================================================================
     let latestModerationMarkdown = "";
 
@@ -384,39 +378,48 @@ A clean, scannable briefing designed for quick messaging to a student or parent:
       const reportContent = document.getElementById("examinerReportContent");
 
       btn.disabled = true;
-      // Display ONLY "Correcting your paper.." as requested
+      // Display ONLY "Correcting your paper.." while working
       status.textContent = "Correcting your paper..";
       resultBox.classList.remove("hidden");
       reportContent.innerHTML = "<p class='text-slate-500 font-medium animate-pulse'>Correcting your paper..</p>";
       latestModerationMarkdown = "";
 
       try {
-        const msExtracted = await extractAllFiles(msFiles);
-        const scriptExtracted = await extractAllFiles(scriptFiles);
+        const msData = await processFilesForOpenAI(msFiles, "QP / Mark Scheme");
+        const scriptData = await processFilesForOpenAI(scriptFiles, "Student Script");
 
-        const userPayload = `=== ATTACHED QUESTION PAPER & OFFICIAL MARK SCHEME ===
-${msExtracted || "[No separate Mark Scheme attached — apply standard CAIE/Edexcel/OxfordAQA mark scheme rules]"}
+        const promptText = `=== ATTACHED QUESTION PAPER & OFFICIAL MARK SCHEME ===
+${msData.extractedText || "[See attached images / apply official CAIE/Edexcel/OxfordAQA mark scheme rules]"}
 
 === ATTACHED STUDENT SCRIPT / ANSWERS ===
-${scriptExtracted || "[No student script text detected]"}`;
+${scriptData.extractedText || "[Transcribe and mark the student's handwritten answers from the attached images]"}`;
 
+        const allImages = [...msData.visionImages, ...scriptData.visionImages];
         let streamWorked = false;
 
-        // Try direct DeepSeek first
+        // Try OpenAI Endpoint
         try {
-          const response = await fetch(DEEPSEEK_ENDPOINT, {
+          const userContent = [
+            { type: "text", text: promptText },
+            ...allImages.map(dataUrl => ({
+              type: "image_url",
+              image_url: { url: dataUrl, detail: "high" }
+            }))
+          ];
+
+          const response = await fetch(OPENAI_ENDPOINT, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${DEEPSEEK_API_KEY}`
+              "Authorization": `Bearer ${OPENAI_API_KEY}`
             },
             body: JSON.stringify({
-              model: "deepseek-chat",
+              model: OPENAI_MODEL,
               temperature: 0.1,
               stream: true,
               messages: [
                 { role: "system", content: EXAMINER_SYSTEM_PROMPT },
-                { role: "user", content: userPayload }
+                { role: "user", content: userContent }
               ]
             })
           });
@@ -451,10 +454,10 @@ ${scriptExtracted || "[No student script text detected]"}`;
             streamWorked = Boolean(latestModerationMarkdown.trim());
           }
         } catch (directErr) {
-          console.warn("Direct DeepSeek unavailable or blocked, streaming via resilient server proxy:", directErr);
+          console.warn("Direct OpenAI unavailable, seamlessly falling back to server examiner proxy:", directErr);
         }
 
-        // If direct DeepSeek fails (e.g. balance exhaustion or CORS), seamlessly route through server proxy
+        // Resilient server fallback via /api/examiner
         if (!streamWorked) {
           const proxyRes = await fetch(BACKEND_EXAMINER_ENDPOINT, {
             method: "POST",
@@ -463,8 +466,8 @@ ${scriptExtracted || "[No student script text detected]"}`;
               provider: "gemini",
               stream: true,
               systemPrompt: EXAMINER_SYSTEM_PROMPT,
-              msInput: msExtracted,
-              studentInput: scriptExtracted
+              msInput: msData.extractedText,
+              studentInput: scriptData.extractedText
             })
           });
 
@@ -505,7 +508,7 @@ ${scriptExtracted || "[No student script text detected]"}`;
         console.error(err);
         status.textContent = "";
         reportContent.innerHTML = `<div class="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
-          <strong>Error:</strong> ${err.message || 'Paper evaluation failed. Please check your files.'}
+          <strong>Error:</strong> ${err.message || 'Paper evaluation failed.'}
         </div>`;
       } finally {
         btn.disabled = false;
@@ -519,13 +522,13 @@ ${scriptExtracted || "[No student script text detected]"}`;
     }
 
     // =========================================================================
-    // CHATBOT EXECUTION (DEEPSEEK API + RESILIENT SERVER FALLBACK)
+    // CHATBOT EXECUTION
     // =========================================================================
     let chatHistory = [
       {
         role: "system",
         content: `You are an elite Principal Examiner for CAIE (IGCSE, O-Level, A-Level), Pearson Edexcel, and OxfordAQA.
-Answer student questions with exact mark scheme keywords, ticks (✓), and clean scientific notation (NEVER use raw LaTeX or $ signs; write formulas like E = W / Q).`
+Answer student questions with exact mark scheme keywords, ticks (✓), and clean scientific notation (NEVER use raw LaTeX or $ signs; write formulas like E = W / Q). Never ask for or output syllabus codes.`
       }
     ];
 
@@ -560,16 +563,15 @@ Answer student questions with exact mark scheme keywords, ticks (✓), and clean
       try {
         let answer = "";
 
-        // Attempt direct DeepSeek
         try {
-          const response = await fetch(DEEPSEEK_ENDPOINT, {
+          const response = await fetch(OPENAI_ENDPOINT, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${DEEPSEEK_API_KEY}`
+              "Authorization": `Bearer ${OPENAI_API_KEY}`
             },
             body: JSON.stringify({
-              model: "deepseek-chat",
+              model: OPENAI_MODEL,
               temperature: 0.2,
               messages: chatHistory
             })
@@ -580,10 +582,9 @@ Answer student questions with exact mark scheme keywords, ticks (✓), and clean
             answer = data.choices?.[0]?.message?.content || "";
           }
         } catch (directChatErr) {
-          console.warn("Direct DeepSeek chat unavailable, falling back to server:", directChatErr);
+          console.warn("Direct chat unavailable, falling back to server proxy:", directChatErr);
         }
 
-        // If direct fails (balance exhausted or network), use server proxy
         if (!answer) {
           const proxyRes = await fetch("/api/scholar/chat", {
             method: "POST",
