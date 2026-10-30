@@ -194,6 +194,14 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
   const SITE_KEY = 'key_ps5gnQ9rlp4xSCl6';
 
+  const [examMeta, setExamMeta] = useState('CAIE IGCSE Physics (0625) Paper 42');
+  const [examSession, setExamSession] = useState('May/June 2026 Variant 2');
+  const [examinerProvider, setExaminerProvider] = useState<
+    'deepseek' | 'openai' | 'gemini'
+  >('gemini');
+  const [msInput, setMsInput] = useState('');
+  const [studentInput, setStudentInput] = useState('');
+
   const formatHighlights = (html: string) => {
     return html
       .replace(
@@ -208,7 +216,44 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
   const renderExaminerAnswerWithKeyPoints = (rawText: string) => {
     let text = String(rawText || '');
-    // Convert highlight markers first
+
+    // 1. Clean out all raw dollar signs ($ or $$) and LaTeX commands
+    text = text
+      .replace(/\$\$/g, '')
+      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 / $2')
+      .replace(/\\varepsilon|\\epsilon/g, 'E')
+      .replace(/\\Delta/g, 'Δ')
+      .replace(/\\Omega/g, 'Ω')
+      .replace(/\\times/g, '×')
+      .replace(/\\div/g, '÷')
+      .replace(/\\pm/g, '±')
+      .replace(/\\approx/g, '≈')
+      .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+      .replace(/\\text\{([^}]+)\}|\\mathrm\{([^}]+)\}/g, '$1$2')
+      .replace(/\$([^$\n]+)\$/g, '$1')
+      .replace(/\$/g, '')
+      .replace(/\\([a-zA-Z]+)/g, '$1')
+      .replace(/^\s*[-*_]{3,}\s*$/gm, '');
+
+    // 2. Highlight core subject concept e.g. Electromotive Force (emf)
+    text = text.replace(
+      /\b(Electromotive Force\s*(?:\(emf\))?)\b/gi,
+      '<mark class="key-point-highlight font-semibold">$1</mark>'
+    );
+
+    // 3. Highlight quoted key criteria phrases in yellow
+    text = text.replace(
+      /"(energy transferred|work done|per unit charge|around a complete circuit\.?)"/gi,
+      '<mark class="key-point-highlight font-semibold">&ldquo;$1&rdquo;</mark>'
+    );
+
+    // 4. Highlight category labels (e.g., **Energy/Work:**, **Per Unit Charge:**) as yellow badges
+    text = text.replace(
+      /\*\*([A-Za-z0-9\s/]+:)\*\*/g,
+      '<span class="inline-block bg-[#fef08a] border border-[#facc15] text-[#0f172a] font-bold px-2 py-0.5 rounded text-xs mr-1.5 shadow-2xs">$1</span>'
+    );
+
+    // 5. Convert highlight markers ==term==
     text = text.replace(
       /==([^=]+)==/g,
       '<mark class="key-point-highlight">$1</mark>'
@@ -217,20 +262,26 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     let html = String(marked.parse(text));
     html = formatHighlights(html);
 
-    // Highlight key points, core definitions, and marking points in vibrant yellow highlighter style
+    // 6. Style blockquotes with blue left border and yellow highlight on the definition quote
+    html = html.replace(
+      /<blockquote>\s*<p>([\s\S]*?)<\/p>\s*<\/blockquote>/gi,
+      '<div class="border-l-4 border-indigo-600 bg-slate-50 p-3.5 my-3 rounded-r-xl font-medium text-slate-900 shadow-2xs"><mark class="key-point-highlight block leading-relaxed">$1</mark></div>'
+    );
+    html = html.replace(
+      /<blockquote>([\s\S]*?)<\/blockquote>/gi,
+      '<div class="border-l-4 border-indigo-600 bg-slate-50 p-3.5 my-3 rounded-r-xl font-medium text-slate-900 shadow-2xs"><mark class="key-point-highlight block leading-relaxed">$1</mark></div>'
+    );
+
+    // 7. Highlight additional strong tags if any
     html = html.replace(
       /<strong>(.*?)<\/strong>/gi,
       '<mark class="key-point-highlight">$1</mark>'
     );
-    html = html.replace(
-      /<b>(.*?)<\/b>/gi,
-      '<mark class="key-point-highlight">$1</mark>'
-    );
 
-    // Also highlight labels like "Key Point:", "Mark Scheme Point:", "Definition:", "Formula:"
+    // 8. Style Examiner Notes in clean italic style
     html = html.replace(
-      /(Key Points?|Marking Points?|Definition|Key Terms?|Formula|Units?):/gi,
-      '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-950 dark:bg-amber-950/70 dark:text-amber-200 font-extrabold px-1.5 py-0.5 rounded border border-amber-300 dark:border-amber-700 text-[11px] uppercase tracking-wide mr-1">🎯 $1:</span>'
+      /(?:<p>)?(Examiner Note:.*?)(?:<\/p>|$)/gi,
+      '<p class="text-xs text-slate-600 italic pl-1 mt-1 mb-2"><em>$1</em></p>'
     );
 
     return html;
@@ -378,9 +429,14 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     e: React.FormEvent<HTMLFormElement>
   ) => {
     e.preventDefault();
-    if (auditScriptFiles.length === 0 || auditSchemeFiles.length === 0) {
+    if (
+      !msInput.trim() &&
+      !studentInput.trim() &&
+      auditScriptFiles.length === 0 &&
+      auditSchemeFiles.length === 0
+    ) {
       setAuditStatusText(
-        'Error: Please upload both the Student Script and the Official Mark Scheme.'
+        'Please provide the Question Paper/Mark Scheme and the Student Script before running moderation.'
       );
       return;
     }
@@ -390,6 +446,57 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     setAuditRenderedHtml('');
     setAuditReportVisible(true);
     setIsAuditStreaming(true);
+
+    // If text inputs are entered or if user is running direct moderation:
+    if (msInput.trim() || studentInput.trim() || auditScriptFiles.length === 0) {
+      setExaminerSubTab('report');
+      setAuditStatusText(
+        `Executing 4-Stage Forensic Moderation (${examinerProvider.toUpperCase()})...`
+      );
+
+      try {
+        const response = await fetch('/api/examiner', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-site-key': SITE_KEY,
+          },
+          body: JSON.stringify({
+            examMeta,
+            examSession,
+            msInput,
+            studentInput,
+            provider: examinerProvider,
+            stream: true,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`API Error (${response.status}): ${errText}`);
+        }
+
+        let accReport = '';
+        await readSSEStream(response, (chunkText) => {
+          accReport += chunkText;
+          setAuditRawMarkdown(accReport);
+          const rendered = String(marked.parse(accReport));
+          setAuditRenderedHtml(rendered);
+        });
+
+        setAuditStatusText('Moderation Complete — Locked by Senior Moderator.');
+        onAwardFocusXp(100);
+      } catch (err: any) {
+        const msg = err?.message || 'Failed during examiner moderation.';
+        setAuditStatusText('Error: ' + msg);
+        setAuditRenderedHtml(
+          `<div class="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm"><strong>Moderation Error:</strong> ${msg}</div>`
+        );
+      } finally {
+        setIsAuditStreaming(false);
+      }
+      return;
+    }
 
     try {
       // 1. Open PDFs & convert every page to high-res images for OCR
@@ -1205,90 +1312,160 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               onSubmit={handleRunForensicExaminerAudit}
               className="space-y-6"
             >
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* 1. Student Script Upload */}
-                <div
-                  className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
-                    isLight
-                      ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
-                      : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
-                  }`}
-                >
-                  <label className="block cursor-pointer">
-                    <span className="text-sm font-semibold block mb-1">
-                      1. Upload Past Paper / Student Script
-                    </span>
-                    <span className={`text-xs block mb-4 ${mutedText}`}>
-                      PDF or Images (JPG/PNG) — Every page &amp; handwritten note is unpacked for OCR
-                    </span>
-                    <input
-                      type="file"
-                      id="studentScript"
-                      name="studentScript"
-                      multiple
-                      accept=".pdf,image/*"
-                      required={auditScriptFiles.length === 0}
-                      onChange={(e) => {
-                        const files = e.target.files
-                          ? Array.from(e.target.files)
-                          : [];
-                        setAuditScriptFiles(files);
-                        handleFileUpload(e);
-                      }}
-                      className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
-                    />
-                    {auditScriptFiles.length > 0 && (
-                      <div className="mt-2.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
-                        {auditScriptFiles.length} Past Paper / Script file(s) ready:{' '}
-                        {auditScriptFiles.map((f) => f.name).join(', ')}
-                      </div>
-                    )}
+              {/* Row 1: Board, Session, and Provider */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${mutedText}`}>
+                    Exam Board &amp; Subject
                   </label>
+                  <input
+                    id="examMeta"
+                    type="text"
+                    value={examMeta}
+                    onChange={(e) => setExamMeta(e.target.value)}
+                    placeholder="e.g., CAIE IGCSE Physics (0625) Paper 42"
+                    className={`w-full rounded-lg border px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-800'
+                        : 'bg-[#090D16] border-white/15 text-slate-100'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${mutedText}`}>
+                    Session / Series
+                  </label>
+                  <input
+                    id="examSession"
+                    type="text"
+                    value={examSession}
+                    onChange={(e) => setExamSession(e.target.value)}
+                    placeholder="e.g., May/June 2026 Variant 2"
+                    className={`w-full rounded-lg border px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-800'
+                        : 'bg-[#090D16] border-white/15 text-slate-100'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-semibold uppercase tracking-wider mb-1 ${mutedText}`}>
+                    AI Examiner Provider
+                  </label>
+                  <select
+                    id="providerSelect"
+                    value={examinerProvider}
+                    onChange={(e) =>
+                      setExaminerProvider(
+                        e.target.value as 'deepseek' | 'openai' | 'gemini'
+                      )
+                    }
+                    className={`w-full rounded-lg border px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-800'
+                        : 'bg-[#090D16] border-white/15 text-slate-100'
+                    }`}
+                  >
+                    <option value="gemini">Provider: Gemini Principal Examiner (Server)</option>
+                    <option value="deepseek">Provider: DeepSeek API</option>
+                    <option value="openai">Provider: OpenAI API (gpt-4o)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Row 2: Textareas for QP/MS and Student Script with optional file uploads */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className={`p-4 rounded-xl border ${subtleSurface}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={`block text-xs font-semibold uppercase tracking-wider ${mutedText}`}>
+                      1. Question Paper (QP) &amp; Official Mark Scheme (MS)
+                    </label>
+                    <span className="text-[10px] text-indigo-500 font-semibold">Paste text or upload file</span>
+                  </div>
+                  <textarea
+                    id="msInput"
+                    rows={7}
+                    value={msInput}
+                    onChange={(e) => setMsInput(e.target.value)}
+                    placeholder="Paste the official Question stems, maximum marks [N], and official Mark Scheme (M1, A1, B1, C1 criteria, Accept/Reject rules)..."
+                    className={`w-full rounded-lg border p-3 text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500 mb-2 ${
+                      isLight
+                        ? 'bg-white border-slate-300 text-slate-800'
+                        : 'bg-[#090D16] border-white/15 text-slate-100'
+                    }`}
+                  />
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <label className="cursor-pointer text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 font-medium inline-flex items-center gap-1.5 text-xs">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{auditSchemeFiles.length > 0 ? `${auditSchemeFiles.length} file(s) attached` : 'Upload Mark Scheme PDF/Image'}</span>
+                      <input
+                        type="file"
+                        id="markScheme"
+                        multiple
+                        accept=".pdf,image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = e.target.files ? Array.from(e.target.files) : [];
+                          setAuditSchemeFiles(files);
+                          handleFileUpload(e);
+                        }}
+                      />
+                    </label>
+                    {auditSchemeFiles.length > 0 && (
+                      <span className="text-[10px] text-emerald-600 font-semibold truncate max-w-[200px]">
+                        ✓ {auditSchemeFiles.map((f) => f.name).join(', ')}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {/* 2. Official Mark Scheme Upload */}
-                <div
-                  className={`border-2 border-dashed rounded-xl p-6 text-center transition ${
-                    isLight
-                      ? 'border-slate-300 hover:border-indigo-500 bg-slate-50/50'
-                      : 'border-white/15 hover:border-indigo-500 bg-[#090D16]/50'
-                  }`}
-                >
-                  <label className="block cursor-pointer">
-                    <span className="text-sm font-semibold block mb-1">
-                      2. Upload Official Mark Scheme
-                    </span>
-                    <span className={`text-xs block mb-4 ${mutedText}`}>
-                      PDF or Images (JPG/PNG) — Complete official marking rubric
-                    </span>
-                    <input
-                      type="file"
-                      id="markScheme"
-                      name="markScheme"
-                      multiple
-                      accept=".pdf,image/*"
-                      required={auditSchemeFiles.length === 0}
-                      onChange={(e) => {
-                        const files = e.target.files
-                          ? Array.from(e.target.files)
-                          : [];
-                        setAuditSchemeFiles(files);
-                        handleFileUpload(e);
-                      }}
-                      className="block w-full text-xs text-slate-600 dark:text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                    />
-                    {auditSchemeFiles.length > 0 && (
-                      <div className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                        {auditSchemeFiles.length} Official Mark Scheme file(s) ready:{' '}
-                        {auditSchemeFiles.map((f) => f.name).join(', ')}
-                      </div>
+                <div className={`p-4 rounded-xl border ${subtleSurface}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={`block text-xs font-semibold uppercase tracking-wider ${mutedText}`}>
+                      2. Student Script / Answers to Examine
+                    </label>
+                    <span className="text-[10px] text-indigo-500 font-semibold">Paste text or upload file</span>
+                  </div>
+                  <textarea
+                    id="studentInput"
+                    rows={7}
+                    value={studentInput}
+                    onChange={(e) => setStudentInput(e.target.value)}
+                    placeholder="Paste the student's written responses, calculations, units, and rough working here (or upload script images/PDFs below)..."
+                    className={`w-full rounded-lg border p-3 text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500 mb-2 ${
+                      isLight
+                        ? 'bg-white border-slate-300 text-slate-800'
+                        : 'bg-[#090D16] border-white/15 text-slate-100'
+                    }`}
+                  />
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <label className="cursor-pointer text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 font-medium inline-flex items-center gap-1.5 text-xs">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{auditScriptFiles.length > 0 ? `${auditScriptFiles.length} file(s) attached` : 'Upload Student Script PDF/Image'}</span>
+                      <input
+                        type="file"
+                        id="studentScript"
+                        multiple
+                        accept=".pdf,image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = e.target.files ? Array.from(e.target.files) : [];
+                          setAuditScriptFiles(files);
+                          handleFileUpload(e);
+                        }}
+                      />
+                    </label>
+                    {auditScriptFiles.length > 0 && (
+                      <span className="text-[10px] text-indigo-600 font-semibold truncate max-w-[200px]">
+                        ✓ {auditScriptFiles.map((f) => f.name).join(', ')}
+                      </span>
                     )}
-                  </label>
+                  </div>
                 </div>
               </div>
 
               {/* Pipeline Progress Bar & Controls */}
-              <div className="mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-t border-current/10 pt-4">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-t border-current/10 pt-4">
                 <div className="flex items-center gap-3">
                   {isAuditStreaming && (
                     <div
@@ -1305,13 +1482,18 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 </div>
                 <button
                   type="submit"
-                  id="submitBtn"
+                  id="gradeBtn"
                   disabled={isAuditStreaming}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-6 py-2.5 rounded-xl shadow transition disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  {isAuditStreaming
-                    ? 'Processing OCR & Grading...'
-                    : 'Extract OCR & Grade Paper'}
+                  {isAuditStreaming ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Moderating with {examinerProvider.toUpperCase()}...</span>
+                    </>
+                  ) : (
+                    <span>Run 3-Pass Examiner Moderation</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -1398,11 +1580,11 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                   <div id="viewReport" className="p-6 sm:p-8">
                     <div
                       id="reportOutput"
-                      className="markdown-body leading-relaxed text-sm"
+                      className="examiner-output markdown-body leading-relaxed text-sm"
                       dangerouslySetInnerHTML={{
                         __html:
                           auditRenderedHtml ||
-                          '<p class="text-slate-400 italic">Waiting for Step 1 OCR transcription to complete before streaming Step 2 Moderation Report...</p>',
+                          '<p class="text-slate-400 italic">Waiting for examination to complete...</p>',
                       }}
                     />
                   </div>
@@ -2019,67 +2201,49 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               <div className="space-y-6">
                 {activeSession.messages.map((msg) => {
                   const isUser = msg.role === 'user';
-                  const cleanParagraphs = String(msg.text || '')
-                    .replace(/\$\$/g, '')
-                    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 / $2')
-                    .replace(/\\varepsilon|\\epsilon/g, 'E')
-                    .replace(/\\Delta/g, 'Δ')
-                    .replace(/\\Omega/g, 'Ω')
-                    .replace(/\\times/g, '×')
-                    .replace(/\\div/g, '÷')
-                    .replace(/\\pm/g, '±')
-                    .replace(/\\approx/g, '≈')
-                    .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
-                    .replace(/\\text\{([^}]+)\}|\\mathrm\{([^}]+)\}/g, '$1$2')
-                    .replace(/\$([^$\n]+)\$/g, '$1')
-                    .replace(/\$/g, '')
-                    .replace(/\\([a-zA-Z]+)/g, '$1')
-                    .replace(/\*\*([^*]+)\*\*/g, '$1')
-                    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,;:!?)]|$)/g, '$1$2')
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter((l) => Boolean(l) && !/^[-*_]{3,}$/.test(l));
 
                   return (
                     <div key={msg.id} className="space-y-3.5">
                       {/* Message Bubble */}
                       <div
+                        style={{
+                          backgroundColor: isUser ? '#0F172A' : '#FFFFFF',
+                          borderColor: isUser ? '#0F172A' : '#E2E8F0',
+                          color: isUser ? '#FFFFFF' : '#0F172A',
+                        }}
                         className={`rounded-2xl border transition-all ${
                           isUser
-                            ? isLight
-                              ? 'bg-[#0F172A] text-white border-[#0F172A] ml-auto max-w-xl p-4 shadow-xs'
-                              : 'bg-[#6366F1] text-white border-[#6366F1] ml-auto max-w-xl p-4 shadow-xs'
-                            : `${subtleSurface} p-4 sm:p-5 shadow-2xs`
+                            ? 'bg-[#0F172A] text-white border-[#0F172A] ml-auto max-w-xl p-4 shadow-xs'
+                            : 'bg-white text-[#0F172A] !text-[#0F172A] border-[#E2E8F0] p-4 sm:p-5 shadow-2xs'
                         }`}
                       >
                         {/* Examiner Message Header */}
                         {!isUser && (
-                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-current/10">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-200">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-bold ${
-                                  isLight
-                                    ? 'bg-[#17365D] text-white'
-                                    : 'bg-[#6366F1]/25 text-indigo-300'
-                                }`}
+                                style={{
+                                  backgroundColor: '#17365D',
+                                  color: '#FFFFFF',
+                                }}
+                                className="w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-bold"
                               >
-                                <ShieldCheck className="w-3.5 h-3.5" />
+                                <ShieldCheck className="w-3.5 h-3.5 text-white" />
                               </span>
                               <span
-                                style={{
-                                  color: isLight ? '#0F172A' : '#F8FAFC',
-                                }}
-                                className="text-[11px] font-bold tracking-wider uppercase"
+                                style={{ color: '#0F172A' }}
+                                className="text-[11px] font-bold tracking-wider uppercase !text-[#0F172A]"
                               >
                                 Principal Examiner &amp; Senior Moderator
                               </span>
                             </div>
                             <span
-                              className={`text-[10px] font-mono-tabular px-2 py-0.5 rounded-md border ${
-                                isLight
-                                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                              }`}
+                              style={{
+                                backgroundColor: '#F0FDF4',
+                                borderColor: '#BBF7D0',
+                                color: '#166534',
+                              }}
+                              className="text-[10px] font-mono-tabular px-2.5 py-0.5 rounded-md border font-semibold"
                             >
                               {msg.evaluation
                                 ? '3-Pass Mark Lock Verified'
@@ -2088,70 +2252,19 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                           </div>
                         )}
 
-                        <div
-                          style={{
-                            color: isUser
-                              ? '#FFFFFF'
-                              : isLight
-                              ? '#0F172A'
-                              : '#F8FAFC',
-                          }}
-                          className="space-y-2 text-xs sm:text-[13px] leading-relaxed"
-                        >
-                          {cleanParagraphs.map((line, lIdx) => {
-                            const isHeading =
-                              line.startsWith('#') ||
-                              /^(?:\d+\.\s*)?(?:Pass \d|Output [A-D]|Summary|Key Points|Lost Marks|Model Answer|The Standard Definition|Examiner’s Breakdown|Examiner's Breakdown|Common Pitfalls)/i.test(
-                                line
-                              );
-                            const isBullet =
-                              !isHeading &&
-                              (line.startsWith('- ') ||
-                                line.startsWith('• ') ||
-                                line.startsWith('* ') ||
-                                /^\d+\.\s/.test(line));
-                            const cleanedLine = line
-                              .replace(/^#+\s*/, '')
-                              .replace(/^>\s*/, '');
-
-                            if (isHeading) {
-                              return (
-                                <div
-                                  key={lIdx}
-                                  style={{
-                                    color: isUser
-                                      ? '#FFFFFF'
-                                      : isLight
-                                      ? '#0F172A'
-                                      : '#F8FAFC',
-                                  }}
-                                  className="font-bold text-xs sm:text-sm pt-1.5 first:pt-0 tracking-tight"
-                                >
-                                  {cleanedLine.replace(/^\d+\.\s*/, '')}
-                                </div>
-                              );
-                            }
-                            if (isBullet) {
-                              return (
-                                <div
-                                  key={lIdx}
-                                  className="flex items-start gap-2 pl-1"
-                                >
-                                  <span className="text-indigo-500 font-bold mt-0.5">
-                                    •
-                                  </span>
-                                  <span>
-                                    {cleanedLine.replace(
-                                      /^(?:[-•*]|\d+\.)\s*/,
-                                      ''
-                                    )}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            return <p key={lIdx}>{cleanedLine}</p>;
-                          })}
-                        </div>
+                        {isUser ? (
+                          <div className="text-xs sm:text-[13px] leading-relaxed text-white">
+                            {msg.text}
+                          </div>
+                        ) : (
+                          <div
+                            style={{ color: '#0F172A' }}
+                            className="examiner-output examiner-answer-rendered text-xs sm:text-[13px] leading-relaxed text-[#0F172A] !text-[#0F172A] space-y-2.5"
+                            dangerouslySetInnerHTML={{
+                              __html: renderExaminerAnswerWithKeyPoints(msg.text),
+                            }}
+                          />
+                        )}
                       </div>
 
                       {/* If message includes a 3-Pass Examiner Evaluation, render the structured 4-Output Studio */}

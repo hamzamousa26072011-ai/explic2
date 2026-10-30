@@ -227,4 +227,50 @@
   display: inline !important;
 }
 
+/* Styling for the rendered Examiner Report & Ledger Tables */
+.examiner-output h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-top: 1.75rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid #e2e8f0;
+}
+.examiner-output h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #334155;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.examiner-output table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+.examiner-output th, .examiner-output td {
+  border: 1px solid #cbd5e1;
+  padding: 0.65rem 0.85rem;
+  text-align: left;
+}
+.examiner-output th {
+  background-color: #f1f5f9;
+  font-weight: 700;
+  color: #0f172a;
+}
+.examiner-output tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+.examiner-output ul, .examiner-output ol {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+  list-style-type: disc;
+}
+.examiner-output p {
+  margin-bottom: 0.75rem;
+  line-height: 1.65;
+}
+
 

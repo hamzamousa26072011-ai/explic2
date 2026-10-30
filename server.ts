@@ -725,17 +725,13 @@ function extractReadableTextFromPdfBase64(base64Data: string): string {
 }
 
 function getGeminiClient(): GoogleGenAI | null {
-  const defaultToken = [
-    'AQ.Ab8RN6LnDV5RjEA',
-    '_IgaPehP8877D8F1Ufh9PzsupWowL4B5QBg',
-  ].join('');
   const apiKey =
     process.env.GEMINI_API_KEY &&
     process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
       ? process.env.GEMINI_API_KEY
-      : defaultToken;
+      : null;
 
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+  if (!apiKey) {
     return null;
   }
   return new GoogleGenAI({
@@ -1361,6 +1357,203 @@ app.post('/api/evaluate-transcript', verifySiteKey, async (req, res) => {
 });
 
 // ============================================================================
+// ENDPOINT 2B: DEDICATED EXAMINER MODERATION (/api/examiner)
+// Supports DeepSeek API, OpenAI, and Gemini
+// ============================================================================
+app.post('/api/examiner', async (req, res) => {
+  try {
+    const {
+      examMeta = 'CAIE IGCSE / A-Level',
+      examSession = '2026',
+      msInput = '',
+      studentInput = '',
+      systemPrompt = '',
+      provider = 'gemini',
+      stream = true,
+    } = req.body || {};
+
+    const resolvedSystemPrompt = systemPrompt || PRINCIPAL_EXAMINER_SYSTEM_PROMPT;
+    const userPromptText = `EXAMINATION DETAILS:
+- Board & Paper: ${examMeta}
+- Session: ${examSession}
+
+=== OFFICIAL QUESTION PAPER & MARK SCHEME ===
+${msInput || '[Refer to attached images / standard board mark scheme]'}
+
+=== STUDENT SCRIPT / TRANSCRIPTION ===
+${studentInput || '[Transcribe and mark from attached script images]'}`;
+
+    const deepseekKey = (
+      process.env.DEEPSEEK_API_KEY ||
+      process.env.SCHOLAR_API_KEY ||
+      ''
+    ).trim();
+
+    const openAiKey = (process.env.OPENAI_API_KEY || '').trim();
+    const hasValidOpenAiKey =
+      openAiKey.startsWith('sk-') &&
+      !openAiKey.includes('REPLACE_WITH_YOUR_FULL_UNMASKED_KEY');
+
+    // 1. Try DeepSeek if selected
+    if (provider === 'deepseek' && deepseekKey) {
+      try {
+        const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${deepseekKey}`,
+          },
+          body: JSON.stringify({
+            model: 'deepseek-chat',
+            temperature: 0.1,
+            stream: Boolean(stream),
+            messages: [
+              { role: 'system', content: resolvedSystemPrompt },
+              { role: 'user', content: userPromptText },
+            ],
+          }),
+        });
+
+        if (dsRes.ok) {
+          if (stream) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            if (dsRes.body) {
+              const reader = (dsRes.body as any).getReader();
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                res.write(value);
+              }
+              res.end();
+              return;
+            }
+          } else {
+            const data = await dsRes.json();
+            return res.status(200).json(data);
+          }
+        } else {
+          const errText = await dsRes.text();
+          console.warn('DeepSeek balance exhausted or error response, smoothly falling back to Gemini:', dsRes.status, errText);
+        }
+      } catch (dsErr) {
+        console.warn('DeepSeek request error, smoothly falling back to Gemini:', dsErr);
+      }
+    }
+
+    // 2. Try OpenAI if selected
+    if (provider === 'openai' && hasValidOpenAiKey) {
+      try {
+        const openai = new OpenAI({ apiKey: openAiKey });
+        const messages: any[] = [
+          { role: 'system', content: resolvedSystemPrompt },
+          { role: 'user', content: userPromptText },
+        ];
+        if (stream) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+          const aiStream = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            temperature: 0.1,
+            stream: true,
+            messages,
+          });
+          for await (const chunk of aiStream) {
+            const text = chunk.choices[0]?.delta?.content || '';
+            if (text) {
+              res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
+            }
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        } else {
+          const comp = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            temperature: 0.1,
+            messages,
+          });
+          return res.status(200).json(comp);
+        }
+      } catch (oaiErr) {
+        console.warn('OpenAI error, falling back to Gemini:', oaiErr);
+      }
+    }
+
+    // 3. Fallback to Gemini (Always available via server-side client)
+    const ai = getGeminiClient();
+    if (ai) {
+      const fallbackModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+      for (const fallbackModel of fallbackModels) {
+        try {
+          if (stream) {
+            if (!res.headersSent) {
+              res.setHeader('Content-Type', 'text/event-stream');
+              res.setHeader('Cache-Control', 'no-cache');
+              res.setHeader('Connection', 'keep-alive');
+            }
+            const responseStream = await ai.models.generateContentStream({
+              model: fallbackModel,
+              contents: userPromptText,
+              config: {
+                systemInstruction: resolvedSystemPrompt,
+                temperature: 0.1,
+                maxOutputTokens: 16384,
+              },
+            });
+            for await (const chunk of responseStream) {
+              const text = chunk.text || '';
+              if (text) {
+                res.write(
+                  `data: ${JSON.stringify({
+                    choices: [{ delta: { content: text } }],
+                  })}\n\n`
+                );
+              }
+            }
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
+          } else {
+            const response = await ai.models.generateContent({
+              model: fallbackModel,
+              contents: userPromptText,
+              config: {
+                systemInstruction: resolvedSystemPrompt,
+                temperature: 0.1,
+                maxOutputTokens: 16384,
+              },
+            });
+            return res.status(200).json({
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: response.text || '',
+                  },
+                },
+              ],
+            });
+          }
+        } catch (modelErr) {
+          console.warn(`Model ${fallbackModel} unavailable, trying next:`, modelErr);
+        }
+      }
+    }
+
+    return res.status(500).json({ error: 'No AI provider available' });
+  } catch (error: any) {
+    console.error('Examiner endpoint error:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error?.message || 'Examiner failed' });
+    }
+    res.end();
+  }
+});
+
+// ============================================================================
 // ENDPOINT 3: NORMAL AI CHAT TAB (WITH ACCESS TO PAPER CONTEXT IF AVAILABLE)
 // ============================================================================
 app.post('/api/chat', verifySiteKey, async (req, res) => {
@@ -1670,15 +1863,28 @@ app.post('/api/scholar/chat', verifySiteKey, async (req, res) => {
         });
 
         const fastTutorSystemInstruction = `You are a Principal Examiner & Senior Moderator for Cambridge (CAIE), Pearson Edexcel, and OxfordAQA.
-Respond concisely, clearly, and directly.
-STRICT FORMATTING RULES:
-1. NEVER use dollar signs ($ or $$) or LaTeX backslash commands (such as \\varepsilon, \\frac, \\times, \\Delta). Write all formulas and symbols in clean, plain readable text (for example: E = W / Q, where E is emf in Volts, W is work done in Joules, and Q is charge in Coulombs).
-2. NEVER output "---" horizontal rule lines or single-asterisk italics (*word*).
-3. Structure definitions and explanations cleanly using these exact headings:
-### The Standard Definition
-### Examiner's Breakdown (Marking Criteria)
-### Common Pitfalls & Examiner Notes
-4. Use simple "- " bullet points for marking criteria and pitfalls.`;
+Your mandate is to provide official examiner-level definitions, mark-scheme criteria, and key points formatted with 100% precision.
+
+CRITICAL FORMATTING & PRESENTATION RULES:
+1. NEVER output dollar signs ($ or $$). NEVER use LaTeX backslash syntax (e.g. do not write \\varepsilon, \\frac, \\times, \\Delta). Write all formulas in clean, clear readable text (e.g.: E = W / Q, where E is electromotive force in Volts, W is work done or energy transferred in Joules, and Q is charge in Coulombs).
+2. NEVER output "---" horizontal rule lines.
+3. For academic definitions, follow this exact structure:
+   - Brief introductory sentence identifying the core concept.
+   - Heading: "### The Standard Definition"
+   - Quote block with the official board definition:
+     > "The electromotive force (emf) is the total energy transferred (or work done) by a source per unit charge in driving charge around a complete circuit."
+   - Heading: "### Key Points & Mark Scheme Breakdown"
+   - Under key points, use bold category tags followed by the exact required phrase in quotes, followed by an examiner note:
+     - **Energy/Work:** You must state that it is "energy transferred" or "work done".
+       Examiner Note: Do not simply say "voltage" or "potential difference," as emf specifically refers to the source before internal resistance losses.
+     - **Per Unit Charge:** You must include the phrase "per unit charge" (or "per coulomb").
+     - **Complete Circuit:** You must specify that the charge is being driven "around a complete circuit."
+   - Formula:
+     Mathematical Representation:
+     E = W / Q
+     Where E is emf (Volts), W is energy transferred (Joules), and Q is charge (Coulombs).
+   - Heading: "### Common Pitfalls & Examiner Notes"
+     - List common student misconceptions and marks lost.`;
 
         const cleanTutorReply = (raw: string): string =>
           String(raw || '')
@@ -1700,7 +1906,7 @@ STRICT FORMATTING RULES:
             .replace(/\n{3,}/g, '\n\n')
             .trim();
 
-        for (const modelName of ['gemini-3.8-flash', 'gemini-3.1-flash-lite']) {
+        for (const modelName of ['gemini-3.1-flash-lite', 'gemini-3.8-flash']) {
           try {
             const response = await withScholarTimeout(
               ai.models.generateContent({

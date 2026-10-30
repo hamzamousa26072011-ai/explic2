@@ -3,632 +3,320 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CAIE / Edexcel / OxfordAQA — Principal AI Examiner &amp; Chat</title>
+  <title>AI Scholar — Principal Examiner & Script Moderator</title>
+  <!-- Tailwind CSS for clean styling -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js to render Markdown tables and formatting cleanly -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- PDF.js for unpacking multi-page PDFs into high-res images for forensic handwriting OCR -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
-    .green-highlight {
-      background-color: #dcfce7;
-      border-left: 4px solid #16a34a;
-      color: #14532d;
-      padding: 6px 10px;
-      margin: 4px 0;
-      border-radius: 4px;
-      font-weight: 500;
-      display: block;
+    /* Styling for the rendered Examiner Report & Ledger Tables */
+    .examiner-output h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #1e293b;
+      margin-top: 1.75rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 2px solid #e2e8f0;
     }
-    .red-highlight {
-      background-color: #fee2e2;
-      border-left: 4px solid #dc2626;
-      color: #7f1d1d;
-      padding: 6px 10px;
-      margin: 4px 0;
-      border-radius: 4px;
-      font-weight: 500;
-      display: block;
+    .examiner-output h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 1.25rem;
+      margin-bottom: 0.5rem;
     }
-    .markdown-body table {
+    .examiner-output table {
       width: 100%;
       border-collapse: collapse;
       margin: 1rem 0;
+      font-size: 0.9rem;
     }
-    .markdown-body th, .markdown-body td {
+    .examiner-output th, .examiner-output td {
       border: 1px solid #cbd5e1;
-      padding: 0.6rem;
+      padding: 0.65rem 0.85rem;
       text-align: left;
     }
-    .markdown-body th {
+    .examiner-output th {
       background-color: #f1f5f9;
-      font-weight: 700;
-    }
-    .markdown-body h1, .markdown-body h2, .markdown-body h3 {
-      margin-top: 1.25rem;
-      margin-bottom: 0.6rem;
       font-weight: 700;
       color: #0f172a;
     }
-    .markdown-body h2 {
-      font-size: 1.3rem;
-      border-bottom: 2px solid #e2e8f0;
-      padding-bottom: 0.35rem;
+    .examiner-output tr:nth-child(even) {
+      background-color: #f8fafc;
     }
-    .markdown-body blockquote {
-      border-left: 4px solid #6366f1;
-      background: #f8fafc;
-      padding: 0.75rem 1rem;
-      margin: 0.75rem 0;
+    .examiner-output ul, .examiner-output ol {
+      margin-left: 1.5rem;
+      margin-bottom: 1rem;
+      list-style-type: disc;
+    }
+    .examiner-output p {
+      margin-bottom: 0.75rem;
+      line-height: 1.65;
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col">
+<body class="bg-slate-50 text-slate-900 min-h-screen py-8 px-4">
 
-  <!-- Top Header with Mini-Tabs -->
-  <header class="bg-slate-900 text-white py-5 shadow-md">
-    <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+  <div class="max-w-5xl mx-auto">
+    <!-- Header -->
+    <div class="bg-slate-900 text-white rounded-2xl p-6 mb-6 shadow-lg flex flex-col md:flex-row md:items-center md:justify-between gap-4">
       <div>
-        <span class="text-xs uppercase tracking-widest bg-indigo-600 px-2.5 py-1 rounded font-semibold">
-          Forensic OCR &amp; 3-Pass Moderation
+        <span class="inline-block bg-amber-500/20 text-amber-300 text-xs font-semibold px-2.5 py-1 rounded-full mb-2 border border-amber-400/30">
+          CAIE · Pearson Edexcel · OxfordAQA
         </span>
-        <h1 class="text-2xl font-bold mt-2">
-          AI Principal Examiner &amp; Assessment Portal
-        </h1>
-        <p class="text-slate-400 text-sm">
-          Cambridge (IGCSE / O-Level / AS &amp; A-Level) · Pearson Edexcel · OxfordAQA
-        </p>
+        <h1 class="text-2xl font-bold tracking-tight">AI Scholar — Principal Examiner</h1>
+        <p class="text-slate-300 text-sm mt-1">Forensic Script Transcription & 3-Pass Board-Level Assessment Moderator</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <select id="providerSelect" class="bg-slate-800 text-slate-200 text-xs rounded-lg px-3 py-2 border border-slate-700 focus:outline-none">
+          <option value="gemini" selected>Provider: Gemini Principal Examiner (Fast &amp; Accurate)</option>
+          <option value="deepseek">Provider: DeepSeek API</option>
+          <option value="openai">Provider: OpenAI API (gpt-4o)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Input Form -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Exam Board & Subject</label>
+          <input id="examMeta" type="text" placeholder="e.g., CAIE IGCSE Physics (0625) Paper 42" 
+            class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Session / Series</label>
+          <input id="examSession" type="text" placeholder="e.g., May/June 2026 Variant 2" 
+            class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Upload Script Images (Optional — Vision Models)</label>
+          <input id="scriptImages" type="file" accept="image/*,.pdf" multiple 
+            class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-800 hover:file:bg-slate-200" />
+        </div>
       </div>
 
-      <!-- Mini-Tabs Navigation Bar -->
-      <div class="flex bg-slate-800 p-1.5 rounded-xl border border-slate-700">
-        <button
-          id="tabCorrectionBtn"
-          onclick="switchMainTab('correction')"
-          class="px-4 py-2 rounded-lg text-sm font-semibold transition bg-indigo-600 text-white shadow"
-        >
-          📄 Paper Correction
-        </button>
-        <button
-          id="tabChatBtn"
-          onclick="switchMainTab('chat')"
-          class="px-4 py-2 rounded-lg text-sm font-semibold transition text-slate-300 hover:text-white"
-        >
-          💬 Normal AI Chat
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+            1. Question Paper (QP) & Official Mark Scheme (MS)
+          </label>
+          <textarea id="msInput" rows="7" placeholder="Paste the official Question stems, maximum marks [N], and official Mark Scheme (M1, A1, B1, C1 criteria, Accept/Reject rules)..."
+            class="w-full rounded-xl border border-slate-300 p-3.5 text-sm font-mono focus:ring-2 focus:ring-slate-900 focus:outline-none"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+            2. Student Script / Answers to Examine
+          </label>
+          <textarea id="studentInput" rows="7" placeholder="Paste the student's written responses, calculations, units, and rough working here (or upload script images above if using a vision model)..."
+            class="w-full rounded-xl border border-slate-300 p-3.5 text-sm font-mono focus:ring-2 focus:ring-slate-900 focus:outline-none"></textarea>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-slate-100">
+        <p id="statusText" class="text-xs text-slate-500">Ready for 4-Stage Forensic Moderation.</p>
+        <button id="gradeBtn" onclick="runExaminerModeration()" 
+          class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition flex items-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer">
+          <span>Run 3-Pass Examiner Moderation</span>
         </button>
       </div>
     </div>
-  </header>
 
-  <!-- Main Content Area -->
-  <main class="max-w-6xl w-full mx-auto px-6 py-8 flex-1">
-
-    <!-- ================================================================== -->
-    <!-- SECTION 1: PAPER CORRECTION TAB (OCR EXTRACTION + MODERATION)      -->
-    <!-- ================================================================== -->
-    <section id="sectionCorrection">
-      <form id="examinerForm" class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-        <div class="grid md:grid-cols-2 gap-6">
-          <!-- Student Script Upload -->
-          <div class="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-indigo-500 transition">
-            <label class="block cursor-pointer">
-              <span class="text-sm font-semibold text-slate-700 block mb-1">
-                1. Upload Past Paper / Student Script
-              </span>
-              <span class="text-xs text-slate-500 block mb-4">
-                PDF or Images (JPG/PNG) — Every page &amp; handwritten note is unpacked for OCR
-              </span>
-              <input
-                type="file"
-                id="studentScript"
-                name="studentScript"
-                multiple
-                accept=".pdf,image/*"
-                required
-                class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-              />
-            </label>
-          </div>
-
-          <!-- Official Mark Scheme Upload -->
-          <div class="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-indigo-500 transition">
-            <label class="block cursor-pointer">
-              <span class="text-sm font-semibold text-slate-700 block mb-1">
-                2. Upload Official Mark Scheme
-              </span>
-              <span class="text-xs text-slate-500 block mb-4">
-                PDF or Images (JPG/PNG) — Complete official marking rubric
-              </span>
-              <input
-                type="file"
-                id="markScheme"
-                name="markScheme"
-                multiple
-                accept=".pdf,image/*"
-                required
-                class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
-              />
-            </label>
-          </div>
-        </div>
-
-        <!-- Pipeline Progress Bar & Controls -->
-        <div class="mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-t pt-4">
-          <div class="flex items-center gap-3">
-            <div id="spinner" class="hidden w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-            <p id="statusText" class="text-sm font-medium text-slate-600">
-              Ready: Step 1 (Forensic OCR Transcription) ➔ Step 2 (3-Pass Mark Scheme Comparison).
-            </p>
-          </div>
-          <button
-            type="submit"
-            id="submitBtn"
-            class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-lg shadow transition disabled:opacity-50"
-          >
-            Extract OCR &amp; Grade Paper
-          </button>
-        </div>
-      </form>
-
-      <!-- Output Sub-Tabs (Switch between OCR Transcription & Final Grading Report) -->
-      <div id="resultContainer" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div class="bg-slate-100 px-6 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <div class="flex gap-2">
-            <button
-              id="subTabReportBtn"
-              onclick="switchSubTab('report')"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white shadow-sm transition"
-            >
-              ✅ Final Moderation Report (Stages 3 &amp; 4)
-            </button>
-            <button
-              id="subTabOcrBtn"
-              onclick="switchSubTab('ocr')"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition"
-            >
-              🔍 Verbatim OCR &amp; Mark Scheme Transcript (Stages 1 &amp; 2)
-            </button>
-          </div>
-
-          <div class="flex gap-2">
-            <button
-              id="reEvaluateBtn"
-              onclick="runEvaluationFromTranscript()"
-              class="hidden text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded transition"
-            >
-              Re-Grade Edited OCR Transcript
-            </button>
-            <button
-              id="copyBtn"
-              class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold px-3 py-1.5 rounded transition"
-            >
-              Copy Output
-            </button>
-          </div>
-        </div>
-
-        <!-- Sub-Tab 1: Final Moderation Report -->
-        <div id="viewReport" class="p-8">
-          <div id="reportOutput" class="markdown-body text-slate-800 leading-relaxed text-sm"></div>
-        </div>
-
-        <!-- Sub-Tab 2: Verbatim OCR Transcript (Editable & Inspectable) -->
-        <div id="viewOcr" class="hidden p-8 bg-slate-50">
-          <p class="text-xs text-slate-500 mb-3">
-            Below is the raw 100% verbatim OCR transcription of the student's handwriting, annotations, and mark scheme. You can inspect or edit any character and click <strong>"Re-Grade Edited OCR Transcript"</strong> above.
-          </p>
-          <textarea
-            id="ocrTextarea"
-            rows="18"
-            class="w-full font-mono text-xs p-4 rounded-lg border border-slate-300 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-6"
-            placeholder="OCR transcription will stream here..."
-          ></textarea>
-          <h3 class="text-sm font-bold text-slate-700 mb-2">Formatted OCR Preview:</h3>
-          <div id="ocrOutput" class="markdown-body bg-white p-6 rounded-lg border border-slate-200 text-slate-800 text-sm"></div>
-        </div>
+    <!-- Output Area -->
+    <div id="resultContainer" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-4 mb-4">
+        <h2 class="text-lg font-bold text-slate-900">Official Examiner Moderation Report</h2>
+        <button onclick="copyReportText()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium px-3 py-1.5 rounded-lg transition cursor-pointer">
+          Copy Full Report
+        </button>
       </div>
-    </section>
-
-    <!-- ================================================================== -->
-    <!-- SECTION 2: NORMAL AI CHAT TAB                                      -->
-    <!-- ================================================================== -->
-    <section id="sectionChat" class="hidden">
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col h-[680px] overflow-hidden">
-        <!-- Chat Top Bar -->
-        <div class="px-6 py-4 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
-          <div>
-            <h2 class="text-base font-bold text-slate-800">AI Examiner &amp; Study Chat</h2>
-            <p class="text-xs text-slate-500">
-              Ask general subject questions or discuss the paper you just graded in the Paper Correction tab.
-            </p>
-          </div>
-          <button
-            onclick="clearChat()"
-            class="text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-600 font-semibold px-3 py-1.5 rounded"
-          >
-            Clear Chat
-          </button>
-        </div>
-
-        <!-- Chat Messages Scroll Container -->
-        <div id="chatMessages" class="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50">
-          <div class="flex justify-start">
-            <div class="max-w-2xl bg-white border border-slate-200 rounded-2xl rounded-tl-none px-4 py-3 text-sm text-slate-800 shadow-sm">
-              Hello! I am your AI Examiner &amp; Tutor. You can chat with me about any IGCSE, O-Level, or A-Level topic, or switch to the <strong>Paper Correction</strong> tab to upload a script and mark scheme for full forensic OCR grading.
-            </div>
-          </div>
-        </div>
-
-        <!-- Chat Input Bar -->
-        <form id="chatForm" class="p-4 bg-white border-t border-slate-200 flex gap-3">
-          <input
-            type="text"
-            id="chatInput"
-            placeholder="Ask a question about a question, mark scheme, or topic..."
-            required
-            class="flex-1 px-4 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <button
-            type="submit"
-            id="chatSendBtn"
-            class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm shadow transition disabled:opacity-50"
-          >
-            Send
-          </button>
-        </form>
-      </div>
-    </section>
-
-  </main>
+      <div id="examinerOutput" class="examiner-output text-slate-800 text-sm leading-relaxed"></div>
+    </div>
+  </div>
 
   <script>
-    // Configure PDF.js worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    // ============================================================================
+    // CONFIGURATION & SYSTEM PROMPT
+    // ============================================================================
+    const API_KEY = "";
 
-    const SITE_KEY = "key_ps5gnQ9rlp4xSCl6";
+    const SYSTEM_PROMPT = `# ROLE & PROFESSIONAL AUTHORITY
+You are an elite Principal Examiner, Chief Assessment Moderator, and Forensic Handwriting Transcription Specialist for international examination boards, specifically:
+- Cambridge Assessment International Education (CAIE: IGCSE, O-Level, AS & A-Level)
+- Pearson Edexcel (International GCSE & International A-Level)
+- OxfordAQA International Examinations
 
-    // DOM Elements — Paper Correction
-    const form = document.getElementById("examinerForm");
-    const submitBtn = document.getElementById("submitBtn");
-    const spinner = document.getElementById("spinner");
-    const statusText = document.getElementById("statusText");
-    const resultContainer = document.getElementById("resultContainer");
-    const reportOutput = document.getElementById("reportOutput");
-    const ocrOutput = document.getElementById("ocrOutput");
-    const ocrTextarea = document.getElementById("ocrTextarea");
-    const copyBtn = document.getElementById("copyBtn");
-    const reEvaluateBtn = document.getElementById("reEvaluateBtn");
+Your mandate is to examine a student's completed past paper or script strictly against the official Question Paper (QP) and Mark Scheme (MS). You must maintain 100% fidelity, zero omissions, and rigorous board-level marking accuracy. You never assume student intent, never award unearned credit, and consistently verify consequential error (Error Carried Forward / ECF).
 
-    // State
-    let rawOcrMarkdown = "";
-    let rawReportMarkdown = "";
-    let currentSubTab = "report";
-    let chatHistory = [];
+---
 
-    // ========================================================================
-    // MINI-TAB SWITCHING LOGIC
-    // ========================================================================
-    function switchMainTab(tab) {
-      const secCorr = document.getElementById("sectionCorrection");
-      const secChat = document.getElementById("sectionChat");
-      const btnCorr = document.getElementById("tabCorrectionBtn");
-      const btnChat = document.getElementById("tabChatBtn");
+# CORE DIRECTIVES & FORMATTING DISCIPLINE
+1. Zero Omission Policy: You must account for every single question and sub-question from Page 1 to the end of the script. Do not summarize or skip unattempted or zero-mark questions.
+2. Clean Mathematical & Scientific Notation: NEVER use raw LaTeX syntax or dollar-sign enclosures ($ or $$). Write all formulas, units, and values in clean, readable text (e.g., "E = W / Q", "Δθ = 14.5 °C", "ρ = 2.70 g/cm³").
+3. Decisive Ticks (✓) and Crosses (✗): Every mark allocated or withheld must be tied to a distinct marking point (e.g., M1, A1, B1, C1, or Level/Band criteria).
+4. Error Carried Forward (ECF): If a calculation error occurs in an earlier part (e.g., 2(a)), verify whether subsequent parts (2(b), 2(c)) use that incorrect value correctly. Award full method/working marks where permitted by board conventions.
 
-      if (tab === "correction") {
-        secCorr.classList.remove("hidden");
-        secChat.classList.add("hidden");
-        btnCorr.className = "px-4 py-2 rounded-lg text-sm font-semibold transition bg-indigo-600 text-white shadow";
-        btnChat.className = "px-4 py-2 rounded-lg text-sm font-semibold transition text-slate-300 hover:text-white";
-      } else {
-        secCorr.classList.add("hidden");
-        secChat.classList.remove("hidden");
-        btnChat.className = "px-4 py-2 rounded-lg text-sm font-semibold transition bg-indigo-600 text-white shadow";
-        btnCorr.className = "px-4 py-2 rounded-lg text-sm font-semibold transition text-slate-300 hover:text-white";
+---
+
+# 4-STAGE MODERATION WORKFLOW
+
+### STAGE 1 — FORENSIC OCR & SCRIPT TRANSCRIPTION
+Go through every page of the student script and transcribe:
+- Complete question numbering and sub-question identifiers (e.g., 1(a), 1(b)(i), 2(c)).
+- Printed question stems and maximum available marks [N].
+- 100% verbatim student handwriting, including crossed-out work, numerical working, formula substitutions, units, significant figures, and final answers.
+- All margin notes, rough sketches, graph readings, and annotations written anywhere on the paper.
+
+### STAGE 2 — EXHAUSTIVE MARK SCHEME EXTRACTION
+From the official mark scheme, extract:
+- Every marking point code (M = Method, A = Accuracy, B = Independent, C = Compensatory) or Level-of-Response criteria.
+- Mandatory keywords and underlined terminology (owtte = "or words to that effect").
+- Accept / Allow guidance, numerical tolerance ranges, and valid equivalent methods.
+- Reject / Do Not Accept / Ignore directives, unit penalties, and rounding rules.
+
+### STAGE 3 — 3-PASS INDEPENDENT MARKING
+- Pass 1 (Strict Mark Scheme Matching): Match the student's transcribed text and working against individual rubric points. Apply standard board penalties if a mandatory keyword or unit is omitted.
+- Pass 2 (Technical & Consequential Verification): Audit mathematical steps, significant figures (standard 2–3 s.f. unless specified), and verify ECF across linked calculation sub-questions.
+- Pass 3 (Senior Moderator Lock): Reconcile any discrepancies against board marking conventions (e.g., list rules, contradictions, benefit of the doubt limits) and lock the question-level score.
+
+---
+
+# REQUIRED DELIVERABLE STRUCTURE
+
+Output your complete evaluation using the four sections below:
+
+## 1. Executive Summary & Mark Ledger
+- Header: Examination Board | Subject & Code | Paper Component | Session
+- Score Summary: Total Awarded / Maximum Available (Percentage %) | Provisional Grade (e.g., A*, A, B, 9–1)
+- Ledger Table:
+  | Question | Topic / Focus | Student Evidence | Mark Scheme Criteria | Score |
+  |---|---|---|---|---|
+  | Q1(a) | [Topic] | [Quote student text/working] | [Marking codes & rules] | [X / Y] |
+
+## 2. Question-by-Question Deep Dive & Line-by-Line Corrections
+For EVERY question and sub-question:
+1. Question Header: Question N(x) · [Topic] · [Awarded / Max Marks]
+2. Student Transcription: Exact transcribed answer and annotations.
+3. What Earned You Ticks (✓):
+   - Bullet points citing the specific phrases, steps, or values that secured each mark (M1, A1, B1).
+4. Corrections Marked with a Red Cross (✗) & Why Marks Were Lost:
+   For every deducted mark:
+   - ✗ Student Error / Omission: "[Quote the exact student mistake or missing element]"
+   - Why It Lost Marks: Detailed explanation citing the exact mark scheme requirement or Reject rule.
+   - » Direct Model Correction: The exact phrase, calculation, or step needed to secure full credit.
+   - Examiner Full-Mark Tip: Advice on exam technique, command words, or avoiding common traps.
+5. Examiner Comment: Concise moderator takeaway for that question.
+
+## 3. Whole-Script Diagnostic & Action Plan
+- Strengths to Protect (✓): 3–4 specific techniques or topic areas executed well.
+- Where Marks Were Lost (✗): Categorized loss breakdown (e.g., missing keywords, unit errors, sig-fig truncation, incomplete working, misread command words).
+- Next Four Concrete Exam Targets: 4 high-yield, actionable revisions for the student's next practice paper.
+- Projected Score with Fixes Applied: Recalculated total and grade if these specific targets are met.
+
+## 4. Concise Summary (WhatsApp Format)
+A clean, scannable briefing designed for quick messaging to a student or parent:
+- Subject & Paper: [Board] [Subject] [Paper]
+- Result: [Score] / [Max] ([Percentage]%) — Grade [Provisional Grade]
+- Key Strengths: [Top 2 strengths]
+- Priority Improvement Areas: [Top 2 areas]
+- Next Steps: [Immediate revision action]`;
+
+    let rawMarkdownReport = "";
+
+    async function runExaminerModeration() {
+      const examMeta = document.getElementById("examMeta").value.trim() || "CAIE IGCSE / A-Level";
+      const examSession = document.getElementById("examSession").value.trim() || "2026";
+      const msInput = document.getElementById("msInput").value.trim();
+      const studentInput = document.getElementById("studentInput").value.trim();
+      const imageFiles = document.getElementById("scriptImages").files;
+      const provider = document.getElementById("providerSelect").value;
+
+      if (!msInput && !studentInput && imageFiles.length === 0) {
+        alert("Please provide the Question Paper/Mark Scheme and the Student Script before running moderation.");
+        return;
       }
-    }
 
-    function switchSubTab(subTab) {
-      currentSubTab = subTab;
-      const viewReport = document.getElementById("viewReport");
-      const viewOcr = document.getElementById("viewOcr");
-      const btnReport = document.getElementById("subTabReportBtn");
-      const btnOcr = document.getElementById("subTabOcrBtn");
+      const gradeBtn = document.getElementById("gradeBtn");
+      const statusText = document.getElementById("statusText");
+      const resultContainer = document.getElementById("resultContainer");
+      const examinerOutput = document.getElementById("examinerOutput");
 
-      if (subTab === "report") {
-        viewReport.classList.remove("hidden");
-        viewOcr.classList.add("hidden");
-        reEvaluateBtn.classList.add("hidden");
-        btnReport.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white shadow-sm transition";
-        btnOcr.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition";
-      } else {
-        viewReport.classList.add("hidden");
-        viewOcr.classList.remove("hidden");
-        reEvaluateBtn.classList.remove("hidden");
-        btnOcr.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white shadow-sm transition";
-        btnReport.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition";
-      }
-    }
-
-    // Highlight Formatter for Deliverable 2
-    function formatHighlights(html) {
-      return html
-        .replace(
-          /\[GREEN HIGHLIGHT \| ✓\](.*?)(\n|<br>|<\/p>|<\/li>)/g,
-          '<span class="green-highlight">✓ $1</span>$2'
-        )
-        .replace(
-          /\[RED HIGHLIGHT \| ✗\](.*?)(\n|<br>|<\/p>|<\/li>)/g,
-          '<span class="red-highlight">✗ $1</span>$2'
-        );
-    }
-
-    // ========================================================================
-    // PDF-TO-HIGH-RES-IMAGE UNPACKER FOR 100% HANDWRITING OCR FIDELITY
-    // ========================================================================
-    async function unpackFilesForOCR(fileList, labelPrefix) {
-      const unpackedBlobs = [];
-      for (const file of fileList) {
-        if (file.type === "application/pdf") {
-          statusText.textContent = `Opening ${file.name} and rendering pages for handwriting OCR...`;
-          const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-            statusText.textContent = `Rendering ${labelPrefix} (${file.name} — Page ${pageNum} of ${pdf.numPages})...`;
-            const page = await pdf.getPage(pageNum);
-            const viewport = page.getViewport({ scale: 2.0 }); // 2x high-res scale for crisp handwriting
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-
-            await page.render({ canvasContext: ctx, viewport }).promise;
-            const blob = await new Promise((resolve) =>
-              canvas.toBlob(resolve, "image/png", 0.95)
-            );
-            unpackedBlobs.push({
-              blob,
-              filename: `${file.name.replace(/\.pdf$/i, "")}_page_${pageNum}.png`,
-            });
-          }
-        } else {
-          unpackedBlobs.push({ blob: file, filename: file.name });
-        }
-      }
-      return unpackedBlobs;
-    }
-
-    // ========================================================================
-    // STEP 1 + STEP 2 FULL PIPELINE EXECUTION
-    // ========================================================================
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      rawOcrMarkdown = "";
-      rawReportMarkdown = "";
-      ocrTextarea.value = "";
-      ocrOutput.innerHTML = "";
-      reportOutput.innerHTML = "";
-
+      gradeBtn.disabled = true;
+      statusText.textContent = "Executing 4-Stage Forensic Moderation (Streaming live)...";
       resultContainer.classList.remove("hidden");
-      submitBtn.disabled = true;
-      spinner.classList.remove("hidden");
+      examinerOutput.innerHTML = "<p class='text-slate-400 animate-pulse'>Initializing Principal Examiner protocol...</p>";
+      rawMarkdownReport = "";
 
       try {
-        // 1. Open PDFs & convert every page to high-res images for OCR
-        const scriptInput = document.getElementById("studentScript").files;
-        const schemeInput = document.getElementById("markScheme").files;
-
-        const unpackedScripts = await unpackFilesForOCR(scriptInput, "Student Script");
-        const unpackedSchemes = await unpackFilesForOCR(schemeInput, "Mark Scheme");
-
-        const ocrFormData = new FormData();
-        unpackedScripts.forEach((item) =>
-          ocrFormData.append("studentScript", item.blob, item.filename)
-        );
-        unpackedSchemes.forEach((item) =>
-          ocrFormData.append("markScheme", item.blob, item.filename)
-        );
-
-        // 2. Run Step 1: Forensic OCR & Mark Scheme Transcription
-        switchSubTab("ocr");
-        statusText.textContent =
-          "Step 1/2: Running Forensic OCR on all pages (extracting handwriting, working & mark scheme)...";
-
-        const ocrRes = await fetch("/api/ocr-extract", {
-          method: "POST",
-          headers: { "x-site-key": SITE_KEY },
-          body: ocrFormData,
-        });
-
-        if (!ocrRes.ok) {
-          const err = await ocrRes.json();
-          throw new Error(err.error || "Failed during OCR extraction.");
-        }
-
-        await readSSEStream(ocrRes, (chunkText) => {
-          rawOcrMarkdown += chunkText;
-          ocrTextarea.value = rawOcrMarkdown;
-          ocrOutput.innerHTML = marked.parse(rawOcrMarkdown);
-        });
-
-        // 3. Automatically Run Step 2: 3-Pass Moderation comparing OCR Transcript vs. Mark Scheme
-        await runEvaluationFromTranscript();
-      } catch (err) {
-        statusText.textContent = "Error: " + err.message;
-        reportOutput.innerHTML = `<div class="red-highlight">Error: ${err.message}</div>`;
-      } finally {
-        submitBtn.disabled = false;
-        spinner.classList.add("hidden");
-      }
-    });
-
-    // Runs Step 2 using the text in the OCR Transcript box
-    async function runEvaluationFromTranscript() {
-      const transcriptToGrade = ocrTextarea.value.trim();
-      if (!transcriptToGrade) return;
-
-      rawReportMarkdown = "";
-      reportOutput.innerHTML = "";
-      switchSubTab("report");
-      submitBtn.disabled = true;
-      spinner.classList.remove("hidden");
-      statusText.textContent =
-        "Step 2/2: Comparing OCR Transcription against Mark Scheme (3-Pass Moderation)...";
-
-      try {
-        const evalRes = await fetch("/api/evaluate-transcript", {
+        // Send to backend /api/examiner which supports DeepSeek API, OpenAI, and Gemini
+        const response = await fetch("/api/examiner", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            "x-site-key": SITE_KEY,
-          },
-          body: JSON.stringify({ ocrTranscript: transcriptToGrade }),
-        });
-
-        if (!evalRes.ok) {
-          const err = await evalRes.json();
-          throw new Error(err.error || "Failed during transcript evaluation.");
-        }
-
-        await readSSEStream(evalRes, (chunkText) => {
-          rawReportMarkdown += chunkText;
-          const rendered = marked.parse(rawReportMarkdown);
-          reportOutput.innerHTML = formatHighlights(rendered);
-        });
-
-        statusText.textContent =
-          "Complete — Full OCR Transcription & 3-Pass Examiner Report Locked.";
-      } catch (err) {
-        statusText.textContent = "Error: " + err.message;
-        reportOutput.innerHTML = `<div class="red-highlight">Error: ${err.message}</div>`;
-      } finally {
-        submitBtn.disabled = false;
-        spinner.classList.add("hidden");
-      }
-    }
-
-    // Generic SSE Stream Reader
-    async function readSSEStream(response, onTextChunk) {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop();
-
-        for (const line of parts) {
-          if (line.startsWith("data: ")) {
-            const dataStr = line.replace("data: ", "").trim();
-            if (dataStr === "[DONE]") return;
-            const parsed = JSON.parse(dataStr);
-            if (parsed.error) throw new Error(parsed.error);
-            if (parsed.text) onTextChunk(parsed.text);
-          }
-        }
-      }
-    }
-
-    // Keep OCR preview synced if user edits textarea manually
-    ocrTextarea.addEventListener("input", () => {
-      rawOcrMarkdown = ocrTextarea.value;
-      ocrOutput.innerHTML = marked.parse(rawOcrMarkdown);
-    });
-
-    copyBtn.addEventListener("click", () => {
-      const textToCopy = currentSubTab === "report" ? rawReportMarkdown : ocrTextarea.value;
-      navigator.clipboard.writeText(textToCopy);
-      copyBtn.textContent = "Copied!";
-      setTimeout(() => (copyBtn.textContent = "Copy Output"), 2000);
-    });
-
-    // ========================================================================
-    // NORMAL AI CHAT LOGIC (TAB 2)
-    // ========================================================================
-    const chatForm = document.getElementById("chatForm");
-    const chatInput = document.getElementById("chatInput");
-    const chatMessages = document.getElementById("chatMessages");
-    const chatSendBtn = document.getElementById("chatSendBtn");
-
-    function appendChatBubble(role, markdownText) {
-      const wrapper = document.createElement("div");
-      wrapper.className = role === "user" ? "flex justify-end" : "flex justify-start";
-
-      const bubble = document.createElement("div");
-      bubble.className =
-        role === "user"
-          ? "max-w-2xl bg-indigo-600 text-white rounded-2xl rounded-tr-none px-4 py-3 text-sm shadow-sm"
-          : "max-w-2xl bg-white border border-slate-200 rounded-2xl rounded-tl-none px-4 py-3 text-sm text-slate-800 shadow-sm markdown-body";
-
-      bubble.innerHTML = role === "user" ? markdownText : marked.parse(markdownText);
-      wrapper.appendChild(bubble);
-      chatMessages.appendChild(wrapper);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-      return bubble;
-    }
-
-    chatForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const userText = chatInput.value.trim();
-      if (!userText) return;
-
-      chatInput.value = "";
-      appendChatBubble("user", userText);
-      chatHistory.push({ role: "user", content: userText });
-
-      chatSendBtn.disabled = true;
-      const aiBubble = appendChatBubble("assistant", "Thinking...");
-      let aiReply = "";
-
-      try {
-        const paperContext =
-          rawOcrMarkdown || rawReportMarkdown
-            ? `OCR TRANSCRIPT:\n${rawOcrMarkdown}\n\nMODERATION REPORT:\n${rawReportMarkdown}`
-            : "";
-
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-site-key": SITE_KEY,
+            "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            messages: chatHistory,
-            paperContext,
-          }),
+            examMeta,
+            examSession,
+            msInput,
+            studentInput,
+            systemPrompt: SYSTEM_PROMPT,
+            provider,
+            stream: true
+          })
         });
 
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Chat request failed.");
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`API Error (${response.status}): ${errText}`);
         }
 
-        await readSSEStream(res, (chunkText) => {
-          aiReply += chunkText;
-          aiBubble.innerHTML = marked.parse(aiReply);
-          chatMessages.scrollTop = chatMessages.scrollHeight;
-        });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
 
-        chatHistory.push({ role: "assistant", content: aiReply });
-      } catch (err) {
-        aiBubble.innerHTML = `<span class="text-red-600 font-semibold">Error: ${err.message}</span>`;
-      } finally {
-        chatSendBtn.disabled = false;
-      }
-    });
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-    function clearChat() {
-      chatHistory = [];
-      chatMessages.innerHTML = `
-        <div class="flex justify-start">
-          <div class="max-w-2xl bg-white border border-slate-200 rounded-2xl rounded-tl-none px-4 py-3 text-sm text-slate-800 shadow-sm">
-            Chat history cleared. Ask me anything!
-          </div>
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith("data: ")) continue;
+            const dataStr = trimmed.replace("data: ", "");
+            if (dataStr === "[DONE]") break;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              const delta = parsed.choices?.[0]?.delta?.content || parsed.text;
+              if (delta) {
+                rawMarkdownReport += delta;
+                examinerOutput.innerHTML = marked.parse(rawMarkdownReport);
+              }
+            } catch (e) {
+              // Ignore partial JSON chunks during stream
+            }
+          }
+        }
+
+        statusText.textContent = "Moderation Complete — Locked by Senior Moderator.";
+      } catch (error) {
+        console.error(error);
+        examinerOutput.innerHTML = `<div class="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
+          <strong>Moderation Error:</strong> ${error.message}
         </div>`;
+        statusText.textContent = "Error encountered during moderation.";
+      } finally {
+        gradeBtn.disabled = false;
+      }
+    }
+
+    function copyReportText() {
+      if (!rawMarkdownReport) return;
+      navigator.clipboard.writeText(rawMarkdownReport);
+      alert("Full Examiner Report copied to clipboard!");
     }
   </script>
 </body>
