@@ -450,9 +450,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     // If text inputs are entered or if user is running direct moderation:
     if (msInput.trim() || studentInput.trim() || auditScriptFiles.length === 0) {
       setExaminerSubTab('report');
-      setAuditStatusText(
-        `Executing 4-Stage Forensic Moderation (${examinerProvider.toUpperCase()})...`
-      );
+      setAuditStatusText('Correcting your paper..');
 
       try {
         const response = await fetch('/api/examiner', {

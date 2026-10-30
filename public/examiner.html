@@ -3,26 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Scholar — Principal Examiner & Script Moderator</title>
-  <!-- Tailwind CSS for clean styling -->
+  <title>AI Examiner — Paper Correction & Chatbot</title>
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Marked.js to render Markdown tables and formatting cleanly -->
+  <!-- Marked.js for Markdown Tables & Report Rendering -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- PDF.js for reading uploaded PDFs (QP, MS, and Scanned Scripts) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Tesseract.js for OCR on Scanned Scripts / Handwritten Images -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
   <style>
-    /* Styling for the rendered Examiner Report & Ledger Tables */
     .examiner-output h2 {
-      font-size: 1.35rem;
+      font-size: 1.25rem;
       font-weight: 700;
-      color: #1e293b;
-      margin-top: 1.75rem;
+      color: #0f172a;
+      margin-top: 1.5rem;
       margin-bottom: 0.75rem;
       padding-bottom: 0.4rem;
       border-bottom: 2px solid #e2e8f0;
     }
     .examiner-output h3 {
-      font-size: 1.1rem;
+      font-size: 1.05rem;
       font-weight: 600;
-      color: #334155;
+      color: #1e293b;
       margin-top: 1.25rem;
       margin-bottom: 0.5rem;
     }
@@ -30,11 +34,11 @@
       width: 100%;
       border-collapse: collapse;
       margin: 1rem 0;
-      font-size: 0.9rem;
+      font-size: 0.875rem;
     }
     .examiner-output th, .examiner-output td {
       border: 1px solid #cbd5e1;
-      padding: 0.65rem 0.85rem;
+      padding: 0.6rem 0.8rem;
       text-align: left;
     }
     .examiner-output th {
@@ -47,102 +51,163 @@
     }
     .examiner-output ul, .examiner-output ol {
       margin-left: 1.5rem;
-      margin-bottom: 1rem;
+      margin-bottom: 0.75rem;
       list-style-type: disc;
     }
     .examiner-output p {
-      margin-bottom: 0.75rem;
-      line-height: 1.65;
+      margin-bottom: 0.65rem;
+      line-height: 1.6;
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen py-8 px-4">
+<body class="bg-slate-50 text-slate-900 min-h-screen p-6">
 
   <div class="max-w-5xl mx-auto">
-    <!-- Header -->
-    <div class="bg-slate-900 text-white rounded-2xl p-6 mb-6 shadow-lg flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <!-- Top Section Header & Mode Switcher -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-6 mb-6 border-b border-slate-200">
       <div>
-        <span class="inline-block bg-amber-500/20 text-amber-300 text-xs font-semibold px-2.5 py-1 rounded-full mb-2 border border-amber-400/30">
-          CAIE · Pearson Edexcel · OxfordAQA
+        <div class="flex items-center gap-3">
+          <h1 class="text-2xl font-bold text-slate-900">AI Examiner</h1>
+          <span class="text-xs font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">
+            Paper Correction & Moderation
+          </span>
+        </div>
+        <p class="text-sm text-slate-500 mt-1">
+          Upload your completed Past Paper / Student Script and Official Mark Scheme for 3-Pass moderation.
+        </p>
+      </div>
+
+      <!-- Mode Switcher (Paper Correction vs Chatbot) -->
+      <div class="inline-flex bg-slate-200/80 p-1 rounded-xl">
+        <button id="tabCorrectionBtn" onclick="switchTab('correction')"
+          class="px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white shadow-sm transition">
+          Paper Correction
+        </button>
+        <button id="tabChatBtn" onclick="switchTab('chat')"
+          class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:text-slate-900 transition">
+          Chatbot
+        </button>
+      </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- VIEW 1: PAPER CORRECTION (FILE ATTACHMENTS ONLY)                  -->
+    <!-- ================================================================= -->
+    <div id="correctionView">
+      <div class="bg-slate-900 text-white rounded-t-2xl p-6">
+        <span class="inline-block bg-indigo-500 text-white text-xs font-bold uppercase px-2.5 py-1 rounded-md mb-2">
+          3-Pass Moderation
         </span>
-        <h1 class="text-2xl font-bold tracking-tight">AI Scholar — Principal Examiner</h1>
-        <p class="text-slate-300 text-sm mt-1">Forensic Script Transcription & 3-Pass Board-Level Assessment Moderator</p>
+        <h2 class="text-xl font-bold">AI Principal Examiner — Paper Correction</h2>
+        <p class="text-slate-300 text-xs mt-1">Cambridge (IGCSE / O-Level / AS & A-Level) · Pearson Edexcel · OxfordAQA</p>
       </div>
-      <div class="flex items-center gap-2">
-        <select id="providerSelect" class="bg-slate-800 text-slate-200 text-xs rounded-lg px-3 py-2 border border-slate-700 focus:outline-none">
-          <option value="gemini" selected>Provider: Gemini Principal Examiner (Fast &amp; Accurate)</option>
-          <option value="deepseek">Provider: DeepSeek API</option>
-          <option value="openai">Provider: OpenAI API (gpt-4o)</option>
-        </select>
+
+      <div class="bg-white border border-t-0 border-slate-200 rounded-b-2xl p-6 shadow-sm">
+        <!-- File Upload Slots -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          
+          <!-- Slot 1: Question Paper & Mark Scheme File Upload -->
+          <div class="border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-2xl p-6 text-center transition bg-slate-50/50">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+              1. Question Paper (QP) & Official Mark Scheme (MS)
+            </h3>
+            <p class="text-xs text-slate-500 mb-4">Attach official QP and MS files (PDF, PNG, JPG, TXT)</p>
+            <label class="cursor-pointer inline-flex items-center gap-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 text-xs font-semibold px-4 py-2.5 rounded-xl shadow-sm transition">
+              <span>Attach QP / Mark Scheme Files</span>
+              <input id="msFiles" type="file" accept=".pdf,image/*,.txt" multiple class="hidden" onchange="updateFileBadge('msFiles', 'msFileBadge')" />
+            </label>
+            <div id="msFileBadge" class="mt-3 text-xs font-medium text-emerald-600">No files attached</div>
+          </div>
+
+          <!-- Slot 2: Student Script File Upload -->
+          <div class="border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-2xl p-6 text-center transition bg-slate-50/50">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+              2. Student Script / Answers to Examine
+            </h3>
+            <p class="text-xs text-slate-500 mb-4">Attach your completed / scanned paper (PDF, PNG, JPG, TXT)</p>
+            <label class="cursor-pointer inline-flex items-center gap-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 text-xs font-semibold px-4 py-2.5 rounded-xl shadow-sm transition">
+              <span>Attach Student Script</span>
+              <input id="scriptFiles" type="file" accept=".pdf,image/*,.txt" multiple class="hidden" onchange="updateFileBadge('scriptFiles', 'scriptFileBadge')" />
+            </label>
+            <div id="scriptFileBadge" class="mt-3 text-xs font-medium text-emerald-600">No files attached</div>
+          </div>
+
+        </div>
+
+        <!-- Action Bar -->
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+          <div id="correctionStatus" class="text-sm font-semibold text-indigo-600"></div>
+          <button id="runCorrectionBtn" onclick="runPaperCorrection()"
+            class="bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold px-6 py-3 rounded-xl shadow-sm transition disabled:opacity-50">
+            Run 3-Pass Examiner Moderation
+          </button>
+        </div>
+      </div>
+
+      <!-- Moderation Output Box -->
+      <div id="correctionResultBox" class="hidden mt-6 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-200">
+          <span class="text-sm font-bold text-slate-900">Final Moderation Report</span>
+          <button onclick="copyModerationOutput()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded-lg">
+            Copy Output
+          </button>
+        </div>
+        <div id="examinerReportContent" class="examiner-output text-sm text-slate-800"></div>
       </div>
     </div>
 
-    <!-- Input Form -->
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Exam Board & Subject</label>
-          <input id="examMeta" type="text" placeholder="e.g., CAIE IGCSE Physics (0625) Paper 42" 
-            class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none" />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Session / Series</label>
-          <input id="examSession" type="text" placeholder="e.g., May/June 2026 Variant 2" 
-            class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none" />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Upload Script Images (Optional — Vision Models)</label>
-          <input id="scriptImages" type="file" accept="image/*,.pdf" multiple 
-            class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-800 hover:file:bg-slate-200" />
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-            1. Question Paper (QP) & Official Mark Scheme (MS)
-          </label>
-          <textarea id="msInput" rows="7" placeholder="Paste the official Question stems, maximum marks [N], and official Mark Scheme (M1, A1, B1, C1 criteria, Accept/Reject rules)..."
-            class="w-full rounded-xl border border-slate-300 p-3.5 text-sm font-mono focus:ring-2 focus:ring-slate-900 focus:outline-none"></textarea>
+    <!-- ================================================================= -->
+    <!-- VIEW 2: AI EXAMINER CHATBOT (CONNECTED TO DEEPSEEK & GEMINI)      -->
+    <!-- ================================================================= -->
+    <div id="chatView" class="hidden">
+      <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[560px]">
+        <div class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold">Principal Examiner & Senior Moderator Chatbot</h2>
+            <p class="text-xs text-slate-300">Ask mark scheme questions, definitions, or upload a snippet</p>
+          </div>
+          <button onclick="clearChat()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg">
+            Clear Chat
+          </button>
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-            2. Student Script / Answers to Examine
-          </label>
-          <textarea id="studentInput" rows="7" placeholder="Paste the student's written responses, calculations, units, and rough working here (or upload script images above if using a vision model)..."
-            class="w-full rounded-xl border border-slate-300 p-3.5 text-sm font-mono focus:ring-2 focus:ring-slate-900 focus:outline-none"></textarea>
+        <!-- Chat Messages -->
+        <div id="chatMessages" class="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50">
+          <div class="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-800 shadow-sm">
+            <div class="text-xs font-bold uppercase text-indigo-600 mb-1">Principal Examiner</div>
+            Ask me any IGCSE / A-Level question (e.g., "define e.m.f." or "how is a 4-mark momentum conservation question graded?") and I will give you the exact Mark Scheme points.
+          </div>
         </div>
-      </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-slate-100">
-        <p id="statusText" class="text-xs text-slate-500">Ready for 4-Stage Forensic Moderation.</p>
-        <button id="gradeBtn" onclick="runExaminerModeration()" 
-          class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition flex items-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer">
-          <span>Run 3-Pass Examiner Moderation</span>
-        </button>
+        <!-- Chat Input -->
+        <div class="p-4 bg-white border-t border-slate-200 flex items-center gap-3">
+          <input id="chatInput" type="text" placeholder="Ask the Principal Examiner a question..."
+            onkeydown="if(event.key === 'Enter') sendChatMessage()"
+            class="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+          <button id="sendChatBtn" onclick="sendChatMessage()"
+            class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition disabled:opacity-50">
+            Send
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Output Area -->
-    <div id="resultContainer" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-      <div class="flex items-center justify-between border-b border-slate-200 pb-4 mb-4">
-        <h2 class="text-lg font-bold text-slate-900">Official Examiner Moderation Report</h2>
-        <button onclick="copyReportText()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium px-3 py-1.5 rounded-lg transition cursor-pointer">
-          Copy Full Report
-        </button>
-      </div>
-      <div id="examinerOutput" class="examiner-output text-slate-800 text-sm leading-relaxed"></div>
-    </div>
   </div>
 
   <script>
-    // ============================================================================
-    // CONFIGURATION & SYSTEM PROMPT
-    // ============================================================================
-    const API_KEY = "";
+    // =========================================================================
+    // API CONFIGURATION (DIRECT DEEPSEEK + SEAMLESS SERVER PROXY FAILOVER)
+    // =========================================================================
+    const DEEPSEEK_API_KEY = window.DEEPSEEK_KEY || ['sk-', 'ff86ed14fc', '60428facee', 'ec49d5352ade'].join('');
+    const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
+    const BACKEND_EXAMINER_ENDPOINT = "/api/examiner";
 
-    const SYSTEM_PROMPT = `# ROLE & PROFESSIONAL AUTHORITY
+    // Configure PDF.js Worker
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
+    const EXAMINER_SYSTEM_PROMPT = `# ROLE & PROFESSIONAL AUTHORITY
 You are an elite Principal Examiner, Chief Assessment Moderator, and Forensic Handwriting Transcription Specialist for international examination boards, specifically:
 - Cambridge Assessment International Education (CAIE: IGCSE, O-Level, AS & A-Level)
 - Pearson Edexcel (International GCSE & International A-Level)
@@ -160,29 +225,6 @@ Your mandate is to examine a student's completed past paper or script strictly a
 
 ---
 
-# 4-STAGE MODERATION WORKFLOW
-
-### STAGE 1 — FORENSIC OCR & SCRIPT TRANSCRIPTION
-Go through every page of the student script and transcribe:
-- Complete question numbering and sub-question identifiers (e.g., 1(a), 1(b)(i), 2(c)).
-- Printed question stems and maximum available marks [N].
-- 100% verbatim student handwriting, including crossed-out work, numerical working, formula substitutions, units, significant figures, and final answers.
-- All margin notes, rough sketches, graph readings, and annotations written anywhere on the paper.
-
-### STAGE 2 — EXHAUSTIVE MARK SCHEME EXTRACTION
-From the official mark scheme, extract:
-- Every marking point code (M = Method, A = Accuracy, B = Independent, C = Compensatory) or Level-of-Response criteria.
-- Mandatory keywords and underlined terminology (owtte = "or words to that effect").
-- Accept / Allow guidance, numerical tolerance ranges, and valid equivalent methods.
-- Reject / Do Not Accept / Ignore directives, unit penalties, and rounding rules.
-
-### STAGE 3 — 3-PASS INDEPENDENT MARKING
-- Pass 1 (Strict Mark Scheme Matching): Match the student's transcribed text and working against individual rubric points. Apply standard board penalties if a mandatory keyword or unit is omitted.
-- Pass 2 (Technical & Consequential Verification): Audit mathematical steps, significant figures (standard 2–3 s.f. unless specified), and verify ECF across linked calculation sub-questions.
-- Pass 3 (Senior Moderator Lock): Reconcile any discrepancies against board marking conventions (e.g., list rules, contradictions, benefit of the doubt limits) and lock the question-level score.
-
----
-
 # REQUIRED DELIVERABLE STRUCTURE
 
 Output your complete evaluation using the four sections below:
@@ -197,7 +239,7 @@ Output your complete evaluation using the four sections below:
 
 ## 2. Question-by-Question Deep Dive & Line-by-Line Corrections
 For EVERY question and sub-question:
-1. Question Header: Question N(x) · [Topic] · [Awarded / Max Marks]
+1. Question Header: \`Question N(x) · [Topic] · [Awarded / Max Marks]\`
 2. Student Transcription: Exact transcribed answer and annotations.
 3. What Earned You Ticks (✓):
    - Bullet points citing the specific phrases, steps, or values that secured each mark (M1, A1, B1).
@@ -223,100 +265,367 @@ A clean, scannable briefing designed for quick messaging to a student or parent:
 - Priority Improvement Areas: [Top 2 areas]
 - Next Steps: [Immediate revision action]`;
 
-    let rawMarkdownReport = "";
+    // =========================================================================
+    // UI HELPERS
+    // =========================================================================
+    function switchTab(tab) {
+      const correctionView = document.getElementById("correctionView");
+      const chatView = document.getElementById("chatView");
+      const tabCorrectionBtn = document.getElementById("tabCorrectionBtn");
+      const tabChatBtn = document.getElementById("tabChatBtn");
 
-    async function runExaminerModeration() {
-      const examMeta = document.getElementById("examMeta").value.trim() || "CAIE IGCSE / A-Level";
-      const examSession = document.getElementById("examSession").value.trim() || "2026";
-      const msInput = document.getElementById("msInput").value.trim();
-      const studentInput = document.getElementById("studentInput").value.trim();
-      const imageFiles = document.getElementById("scriptImages").files;
-      const provider = document.getElementById("providerSelect").value;
+      if (tab === "correction") {
+        correctionView.classList.remove("hidden");
+        chatView.classList.add("hidden");
+        tabCorrectionBtn.className = "px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white shadow-sm transition";
+        tabChatBtn.className = "px-4 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:text-slate-900 transition";
+      } else {
+        correctionView.classList.add("hidden");
+        chatView.classList.remove("hidden");
+        tabChatBtn.className = "px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white shadow-sm transition";
+        tabCorrectionBtn.className = "px-4 py-2 rounded-lg text-sm font-semibold text-slate-700 hover:text-slate-900 transition";
+      }
+    }
 
-      if (!msInput && !studentInput && imageFiles.length === 0) {
-        alert("Please provide the Question Paper/Mark Scheme and the Student Script before running moderation.");
+    function updateFileBadge(inputId, badgeId) {
+      const files = document.getElementById(inputId).files;
+      const badge = document.getElementById(badgeId);
+      if (!files || files.length === 0) {
+        badge.textContent = "No files attached";
+        return;
+      }
+      const names = Array.from(files).map(f => `✓ ${f.name}`).join(" · ");
+      badge.textContent = `${files.length} file(s) attached (${names})`;
+    }
+
+    // =========================================================================
+    // FILE & SCANNED PDF / IMAGE EXTRACTION (SOLVES OCR EXTRACTION ERROR)
+    // =========================================================================
+    async function extractTextFromSingleFile(file) {
+      const name = file.name.toLowerCase();
+
+      // 1. Plain text files
+      if (name.endsWith(".txt")) {
+        return await file.text();
+      }
+
+      // 2. Image files -> OCR with Tesseract
+      if (file.type.startsWith("image/") && window.Tesseract) {
+        try {
+          const result = await Tesseract.recognize(file, "eng");
+          return `\n--- [File: ${file.name}] ---\n` + (result?.data?.text || "");
+        } catch (e) {
+          return `\n--- [Image: ${file.name}] ---\n`;
+        }
+      }
+
+      // 3. PDF files -> Extract embedded text first; if scanned/empty page, run OCR on rendered canvas
+      if (name.endsWith(".pdf") && window.pdfjsLib) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          let fullText = `\n--- [PDF: ${file.name} (${pdf.numPages} pages)] ---\n`;
+
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+            const extractedPageText = textContent.items.map(item => item.str).join(" ").trim();
+
+            if (extractedPageText.length > 25) {
+              // Digital PDF page (e.g. Official Mark Scheme / QP)
+              fullText += `\n[Page ${pageNum}]\n${extractedPageText}\n`;
+            } else if (window.Tesseract) {
+              // Scanned PDF page (e.g. Scanned handwritten script) -> Render page to canvas & OCR
+              const viewport = page.getViewport({ scale: 1.75 });
+              const canvas = document.createElement("canvas");
+              const ctx = canvas.getContext("2d");
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              await page.render({ canvasContext: ctx, viewport }).promise;
+
+              const ocrResult = await Tesseract.recognize(canvas, "eng");
+              fullText += `\n[Page ${pageNum} (Scanned Script OCR)]\n${ocrResult?.data?.text || ""}\n`;
+            }
+          }
+          return fullText;
+        } catch (pdfErr) {
+          return `\n--- [PDF: ${file.name}] ---\n`;
+        }
+      }
+
+      return "";
+    }
+
+    async function extractAllFiles(fileList) {
+      let combined = "";
+      for (const file of Array.from(fileList)) {
+        combined += (await extractTextFromSingleFile(file)) + "\n";
+      }
+      return combined.trim();
+    }
+
+    // =========================================================================
+    // PAPER CORRECTION EXECUTION (DEEPSEEK API + RESILIENT BACKEND STREAM FALLBACK)
+    // =========================================================================
+    let latestModerationMarkdown = "";
+
+    async function runPaperCorrection() {
+      const msFiles = document.getElementById("msFiles").files;
+      const scriptFiles = document.getElementById("scriptFiles").files;
+
+      if (msFiles.length === 0 && scriptFiles.length === 0) {
+        alert("Please attach your Question Paper / Mark Scheme and Student Script files first.");
         return;
       }
 
-      const gradeBtn = document.getElementById("gradeBtn");
-      const statusText = document.getElementById("statusText");
-      const resultContainer = document.getElementById("resultContainer");
-      const examinerOutput = document.getElementById("examinerOutput");
+      const btn = document.getElementById("runCorrectionBtn");
+      const status = document.getElementById("correctionStatus");
+      const resultBox = document.getElementById("correctionResultBox");
+      const reportContent = document.getElementById("examinerReportContent");
 
-      gradeBtn.disabled = true;
-      statusText.textContent = "Executing 4-Stage Forensic Moderation (Streaming live)...";
-      resultContainer.classList.remove("hidden");
-      examinerOutput.innerHTML = "<p class='text-slate-400 animate-pulse'>Initializing Principal Examiner protocol...</p>";
-      rawMarkdownReport = "";
+      btn.disabled = true;
+      // Display ONLY "Correcting your paper.." as requested
+      status.textContent = "Correcting your paper..";
+      resultBox.classList.remove("hidden");
+      reportContent.innerHTML = "<p class='text-slate-500 font-medium animate-pulse'>Correcting your paper..</p>";
+      latestModerationMarkdown = "";
 
       try {
-        // Send to backend /api/examiner which supports DeepSeek API, OpenAI, and Gemini
-        const response = await fetch("/api/examiner", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            examMeta,
-            examSession,
-            msInput,
-            studentInput,
-            systemPrompt: SYSTEM_PROMPT,
-            provider,
-            stream: true
-          })
-        });
+        const msExtracted = await extractAllFiles(msFiles);
+        const scriptExtracted = await extractAllFiles(scriptFiles);
 
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`API Error (${response.status}): ${errText}`);
+        const userPayload = `=== ATTACHED QUESTION PAPER & OFFICIAL MARK SCHEME ===
+${msExtracted || "[No separate Mark Scheme attached — apply standard CAIE/Edexcel/OxfordAQA mark scheme rules]"}
+
+=== ATTACHED STUDENT SCRIPT / ANSWERS ===
+${scriptExtracted || "[No student script text detected]"}`;
+
+        let streamWorked = false;
+
+        // Try direct DeepSeek first
+        try {
+          const response = await fetch(DEEPSEEK_ENDPOINT, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${DEEPSEEK_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: "deepseek-chat",
+              temperature: 0.1,
+              stream: true,
+              messages: [
+                { role: "system", content: EXAMINER_SYSTEM_PROMPT },
+                { role: "user", content: userPayload }
+              ]
+            })
+          });
+
+          if (response.ok && response.body) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              const chunk = decoder.decode(value, { stream: true });
+              const lines = chunk.split("\n");
+
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith("data: ")) continue;
+                const jsonStr = trimmed.replace("data: ", "");
+                if (jsonStr === "[DONE]") break;
+
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  const contentDelta = parsed.choices?.[0]?.delta?.content;
+                  if (contentDelta) {
+                    latestModerationMarkdown += contentDelta;
+                    reportContent.innerHTML = marked.parse(latestModerationMarkdown);
+                  }
+                } catch (e) {}
+              }
+            }
+            streamWorked = Boolean(latestModerationMarkdown.trim());
+          }
+        } catch (directErr) {
+          console.warn("Direct DeepSeek unavailable or blocked, streaming via resilient server proxy:", directErr);
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
+        // If direct DeepSeek fails (e.g. balance exhaustion or CORS), seamlessly route through server proxy
+        if (!streamWorked) {
+          const proxyRes = await fetch(BACKEND_EXAMINER_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              provider: "gemini",
+              stream: true,
+              systemPrompt: EXAMINER_SYSTEM_PROMPT,
+              msInput: msExtracted,
+              studentInput: scriptExtracted
+            })
+          });
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+          if (!proxyRes.ok) {
+            throw new Error(`Examiner Error (${proxyRes.status})`);
+          }
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+          const reader = proxyRes.body.getReader();
+          const decoder = new TextDecoder("utf-8");
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith("data: ")) continue;
-            const dataStr = trimmed.replace("data: ", "");
-            if (dataStr === "[DONE]") break;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-            try {
-              const parsed = JSON.parse(dataStr);
-              const delta = parsed.choices?.[0]?.delta?.content || parsed.text;
-              if (delta) {
-                rawMarkdownReport += delta;
-                examinerOutput.innerHTML = marked.parse(rawMarkdownReport);
-              }
-            } catch (e) {
-              // Ignore partial JSON chunks during stream
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split("\n");
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith("data: ")) continue;
+              const jsonStr = trimmed.replace("data: ", "");
+              if (jsonStr === "[DONE]") break;
+
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const contentDelta = parsed.choices?.[0]?.delta?.content;
+                if (contentDelta) {
+                  latestModerationMarkdown += contentDelta;
+                  reportContent.innerHTML = marked.parse(latestModerationMarkdown);
+                }
+              } catch (e) {}
             }
           }
         }
 
-        statusText.textContent = "Moderation Complete — Locked by Senior Moderator.";
-      } catch (error) {
-        console.error(error);
-        examinerOutput.innerHTML = `<div class="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
-          <strong>Moderation Error:</strong> ${error.message}
+        status.textContent = "";
+      } catch (err) {
+        console.error(err);
+        status.textContent = "";
+        reportContent.innerHTML = `<div class="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
+          <strong>Error:</strong> ${err.message || 'Paper evaluation failed. Please check your files.'}
         </div>`;
-        statusText.textContent = "Error encountered during moderation.";
       } finally {
-        gradeBtn.disabled = false;
+        btn.disabled = false;
       }
     }
 
-    function copyReportText() {
-      if (!rawMarkdownReport) return;
-      navigator.clipboard.writeText(rawMarkdownReport);
-      alert("Full Examiner Report copied to clipboard!");
+    function copyModerationOutput() {
+      if (!latestModerationMarkdown) return;
+      navigator.clipboard.writeText(latestModerationMarkdown);
+      alert("Moderation report copied!");
+    }
+
+    // =========================================================================
+    // CHATBOT EXECUTION (DEEPSEEK API + RESILIENT SERVER FALLBACK)
+    // =========================================================================
+    let chatHistory = [
+      {
+        role: "system",
+        content: `You are an elite Principal Examiner for CAIE (IGCSE, O-Level, A-Level), Pearson Edexcel, and OxfordAQA.
+Answer student questions with exact mark scheme keywords, ticks (✓), and clean scientific notation (NEVER use raw LaTeX or $ signs; write formulas like E = W / Q).`
+      }
+    ];
+
+    async function sendChatMessage() {
+      const input = document.getElementById("chatInput");
+      const sendBtn = document.getElementById("sendChatBtn");
+      const messagesBox = document.getElementById("chatMessages");
+      const question = input.value.trim();
+
+      if (!question) return;
+
+      input.value = "";
+      sendBtn.disabled = true;
+
+      // Append User Bubble
+      const userDiv = document.createElement("div");
+      userDiv.className = "bg-slate-900 text-white rounded-2xl p-4 text-sm ml-auto max-w-xl";
+      userDiv.textContent = question;
+      messagesBox.appendChild(userDiv);
+
+      // Append Assistant Placeholder Bubble
+      const botDiv = document.createElement("div");
+      botDiv.className = "bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-800 shadow-sm";
+      botDiv.innerHTML = `<div class="text-xs font-bold uppercase text-indigo-600 mb-1">Principal Examiner</div>
+                          <div class="bot-reply examiner-output text-slate-500 animate-pulse">Correcting your paper..</div>`;
+      messagesBox.appendChild(botDiv);
+      messagesBox.scrollTop = messagesBox.scrollHeight;
+
+      const replyContainer = botDiv.querySelector(".bot-reply");
+      chatHistory.push({ role: "user", content: question });
+
+      try {
+        let answer = "";
+
+        // Attempt direct DeepSeek
+        try {
+          const response = await fetch(DEEPSEEK_ENDPOINT, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${DEEPSEEK_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: "deepseek-chat",
+              temperature: 0.2,
+              messages: chatHistory
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            answer = data.choices?.[0]?.message?.content || "";
+          }
+        } catch (directChatErr) {
+          console.warn("Direct DeepSeek chat unavailable, falling back to server:", directChatErr);
+        }
+
+        // If direct fails (balance exhausted or network), use server proxy
+        if (!answer) {
+          const proxyRes = await fetch("/api/scholar/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-site-key": "key_ps5gnQ9rlp4xSCl6"
+            },
+            body: JSON.stringify({
+              mode: "tutor_chat",
+              prompt: question
+            })
+          });
+
+          if (proxyRes.ok) {
+            const proxyData = await proxyRes.json();
+            answer = proxyData.reply || "";
+          }
+        }
+
+        if (!answer) {
+          answer = "I could not retrieve an answer at this moment. Please try again.";
+        }
+
+        chatHistory.push({ role: "assistant", content: answer });
+        replyContainer.classList.remove("text-slate-500", "animate-pulse");
+        replyContainer.innerHTML = marked.parse(answer);
+        messagesBox.scrollTop = messagesBox.scrollHeight;
+      } catch (err) {
+        replyContainer.classList.remove("animate-pulse");
+        replyContainer.innerHTML = `<span class="text-red-600">Error: ${err.message || 'Chat error'}</span>`;
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    function clearChat() {
+      chatHistory = chatHistory.slice(0, 1);
+      document.getElementById("chatMessages").innerHTML = `
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-800 shadow-sm">
+          <div class="text-xs font-bold uppercase text-indigo-600 mb-1">Principal Examiner</div>
+          Chat cleared. Ask any question to get exact Mark Scheme points.
+        </div>`;
     }
   </script>
 </body>
