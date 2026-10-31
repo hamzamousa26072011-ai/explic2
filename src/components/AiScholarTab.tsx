@@ -1,5 +1,4 @@
-import React, { useState, useRef } from 'react';
-import { PDFDocument } from 'pdf-lib';
+import React, { useState, useRef, useEffect } from 'react';
 import { ThemeMode } from '../types';
 
 interface AiScholarTabProps {
@@ -8,1282 +7,1020 @@ interface AiScholarTabProps {
   onAwardFocusXp?: (xpAmount: number) => void;
 }
 
-interface ChatMessageItem {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  isError?: boolean;
+/* ================= CONFIG ================= */
+const CONFIG = {
+  PROVIDER: 'openai' as 'openai' | 'anthropic',
+  API_KEY: 'key_ps5gnQ9rlp4xSCl6', // chatgpt secret value
+  MODELS: {
+    openai: { chat: 'gpt-4o-mini', ocr: 'gpt-4o', grade: 'gpt-4o' },
+    anthropic: {
+      chat: 'claude-haiku-5-5',
+      ocr: 'claude-sonnet-5-5',
+      grade: 'claude-opus-5-5',
+    },
+  },
+};
+/* ========================================== */
+
+const M = () => CONFIG.MODELS[CONFIG.PROVIDER];
+
+const sup: Record<string, string> = { '2': '²', '3': '³' };
+
+export function clean(t: unknown): string {
+  let s = String(t ?? '');
+  s = s
+    .replace(/\\\[([\s\S]*?)\\\]/g, '$1')
+    .replace(/\\\(([\s\S]*?)\\\)/g, '$1')
+    .replace(/\$\$([\s\S]*?)\$\$/g, '$1')
+    .replace(/\$(?!\s)([^$\n]*?\S)\$/g, '$1');
+  const fr = (x: string) =>
+    x.length > 1 && /[^\w.]/.test(x) ? '(' + x + ')' : x;
+  s = s
+    .replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, (_, a, b) => fr(a) + '/' + fr(b))
+    .replace(/\\sqrt\{([^{}]*)\}/g, '√($1)')
+    .replace(/\\(?:text|mathrm|mathbf|textbf)\{([^{}]*)\}/g, '$1')
+    .replace(/\\times/g, '×')
+    .replace(/\\cdot/g, '·')
+    .replace(/\\div/g, '÷')
+    .replace(/\\pm/g, '±')
+    .replace(/\\(?:leq?|leqslant)/g, '≤')
+    .replace(/\\(?:geq?|geqslant)/g, '≥')
+    .replace(/\\neq/g, '≠')
+    .replace(/\\approx/g, '≈')
+    .replace(/\\pi/g, 'π')
+    .replace(/\\theta/g, 'θ')
+    .replace(/\\degree|\^\{?\\circ\}?/g, '°')
+    .replace(/\\(?:left|right|,|;|!|quad)/g, '')
+    .replace(/\^\{?([23])\}?/g, (_, d) => sup[d] || d)
+    .replace(/\^\{([^{}]*)\}/g, '^$1')
+    .replace(/\\([a-zA-Z]+)/g, '$1');
+  return s
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*([-*_]){3,}\s*$/gm, '')
+    .replace(/`+/g, '')
+    .replace(/\\\$/g, '$');
 }
 
-interface TranscriptItem {
-  label: string;
-  text: string;
-}
+export const esc = (s: unknown): string =>
+  String(s ?? '').replace(
+    /[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c)
+  );
 
-interface QuestionBreakdownItem {
-  question: string;
-  status: 'correct' | 'partial' | 'incorrect' | 'unanswered' | 'unclear';
-  awarded_marks: number | null;
-  maximum_marks: number | null;
-  student_evidence: string;
-  marking_decision: string;
-  improvement: string;
-}
+export const inl = (t: unknown): string =>
+  esc(clean(t)).replace(/\*+/g, '').trim();
 
-interface MistakeItem {
-  question: string;
-  mistake: string;
-  why_marks_lost: string;
-  fix: string;
-}
-
-interface CorrectAnswerComparisonItem {
-  question: string;
-  student_answer: string;
-  model_answer: string;
-  mark_scheme_points: string[];
-  comparison: string;
-}
-
-interface StructuredMarkingReport {
-  overall_mark: number | null;
-  maximum_mark: number | null;
-  percentage: number | null;
-  summary: string;
-  question_breakdown: QuestionBreakdownItem[];
-  mistakes: MistakeItem[];
-  correct_answers: CorrectAnswerComparisonItem[];
-  strengths: string[];
-  review_required: string[];
-  marking_notes: string[];
-}
-
-interface StructuredAuditReport {
-  audit_status: 'verified' | 'adjustment_needed' | 'human_review';
-  arithmetic_check: string;
-  verified_mark: number | null;
-  verified_maximum: number | null;
-  issues: string[];
-  corrections: string[];
-  final_note: string;
-}
-
-interface CorrectionResponseData {
-  notice: string;
-  marking: StructuredMarkingReport | string;
-  audit: StructuredAuditReport | string;
-  transcripts: TranscriptItem[];
-}
-
-function escapeHtml(raw: string): string {
-  return String(raw ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderInlineMarkdown(line: string): string {
-  return escapeHtml(line)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
-}
-
-export function renderAssistantMessage(rawText: string): string {
-  const lines = String(rawText ?? '')
-    .replace(/\r\n/g, '\n')
-    .split('\n');
-  const output: string[] = [];
-  let inList: 'ul' | 'ol' | null = null;
-  let inCode = false;
-  let codeLines: string[] = [];
-
-  const closeList = () => {
-    if (inList) {
-      output.push(`</${inList}>`);
-      inList = null;
+export function fmt(t: unknown): string {
+  const out: string[] = [];
+  let list: string[] = [];
+  const flush = () => {
+    if (list.length) {
+      out.push('<ul>' + list.map((x) => '<li>' + x + '</li>').join('') + '</ul>');
     }
+    list = [];
   };
+  for (const raw of esc(clean(t)).split('\n')) {
+    const l = raw.trim();
+    const li = l.match(/^(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (li) {
+      list.push(li[1]);
+      continue;
+    }
+    flush();
+    if (l) out.push('<p>' + l + '</p>');
+  }
+  flush();
+  return out
+    .join('')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*+/g, '');
+}
 
-  for (const line of lines) {
-    if (line.trim().startsWith('```')) {
-      closeList();
-      if (inCode) {
-        output.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-        codeLines = [];
-        inCode = false;
-      } else {
-        inCode = true;
+export const renderAssistantMessage = fmt;
+
+interface LlmMessagePart {
+  image?: string;
+  text?: string;
+}
+
+interface LlmMessage {
+  role: 'user' | 'assistant';
+  content: string | LlmMessagePart[];
+}
+
+interface LlmCallOptions {
+  system: string;
+  messages: LlmMessage[];
+  model: string;
+  stream?: boolean;
+  onToken?: (text: string) => void;
+  json?: boolean;
+  signal?: AbortSignal;
+}
+
+async function llm({
+  system,
+  messages,
+  model,
+  stream,
+  onToken,
+  json,
+  signal,
+}: LlmCallOptions): Promise<string> {
+  const A = CONFIG.PROVIDER === 'anthropic';
+  if (!CONFIG.API_KEY || CONFIG.API_KEY.startsWith('PASTE')) {
+    throw new Error('Add your API key to the CONFIG block at the top of the script.');
+  }
+  const conv = messages.map((m) => ({
+    role: m.role,
+    content:
+      typeof m.content === 'string'
+        ? m.content
+        : m.content.map((p) =>
+            p.image
+              ? A
+                ? {
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: 'image/jpeg',
+                      data: p.image,
+                    },
+                  }
+                : {
+                    type: 'image_url',
+                    image_url: {
+                      url: 'data:image/jpeg;base64,' + p.image,
+                      detail: 'high',
+                    },
+                  }
+              : { type: 'text', text: p.text || '' }
+          ),
+  }));
+  const body = A
+    ? { model, max_tokens: 8000, system, messages: conv, stream: !!stream }
+    : {
+        model,
+        messages: [{ role: 'system', content: system }, ...conv],
+        stream: !!stream,
+        temperature: json ? 0 : 0.5,
+        ...(json ? { response_format: { type: 'json_object' } } : {}),
+      };
+
+  const useDirectOpenAi = !A && CONFIG.API_KEY.startsWith('sk-');
+  const url = A
+    ? 'https://api.anthropic.com/v1/messages'
+    : useDirectOpenAi
+    ? 'https://api.openai.com/v1/chat/completions'
+    : '/api/llm';
+
+  const headers: Record<string, string> = A
+    ? {
+        'x-api-key': CONFIG.API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json',
       }
-      continue;
-    }
+    : {
+        Authorization: 'Bearer ' + CONFIG.API_KEY,
+        'x-site-key': CONFIG.API_KEY,
+        'content-type': 'application/json',
+      };
 
-    if (inCode) {
-      codeLines.push(line);
-      continue;
+  let res: Response | undefined;
+  for (let i = 0; i < 3; i++) {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
+    await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+  }
+  if (!res || !res.ok) {
+    let m = res ? await res.text() : 'Network error';
+    try {
+      const parsed = JSON.parse(m);
+      m = parsed.error?.message || parsed.error || m;
+    } catch {
+      // keep raw text
     }
-
-    if (!line.trim()) {
-      closeList();
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      closeList();
-      const tag = heading[1].length <= 2 ? 'h3' : 'h4';
-      output.push(`<${tag}>${renderInlineMarkdown(heading[2])}</${tag}>`);
-      continue;
-    }
-
-    const bullet = line.match(/^\s*[-*•]\s+(.+)$/);
-    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    if (bullet || numbered) {
-      const targetList = bullet ? 'ul' : 'ol';
-      if (inList !== targetList) {
-        closeList();
-        output.push(`<${targetList}>`);
-        inList = targetList;
+    throw new Error(String(m).slice(0, 300));
+  }
+  if (!stream) {
+    const j = await res.json();
+    return A
+      ? j.content.map((c: any) => c.text || '').join('')
+      : j.choices[0].message.content;
+  }
+  const rd = res.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let full = '';
+  for (;;) {
+    const { done, value } = await rd.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const ls = buf.split('\n');
+    buf = ls.pop() || '';
+    for (const l of ls) {
+      if (!l.startsWith('data:')) continue;
+      const d = l.slice(5).trim();
+      if (d === '[DONE]') continue;
+      try {
+        const j = JSON.parse(d);
+        const t =
+          j.choices?.[0]?.delta?.content ||
+          (j.type === 'content_block_delta' ? j.delta?.text : '') ||
+          '';
+        if (t) {
+          full += t;
+          onToken?.(full);
+        }
+      } catch {
+        // ignore partial line
       }
-      output.push(`<li>${renderInlineMarkdown((bullet || numbered)![1])}</li>`);
-      continue;
     }
-
-    closeList();
-    output.push(`<p>${renderInlineMarkdown(line)}</p>`);
   }
-
-  if (inCode && codeLines.length) {
-    output.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-  }
-  closeList();
-  return output.join('') || '<p></p>';
+  return full;
 }
 
-function formatNumber(value: unknown): string | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+const CHAT_SYS =
+  "You are a friendly, sharp AI tutor and examiner. Answer quickly, clearly and accurately. Write plain text only: never use LaTeX, dollar signs, markdown headings, tables or code fences unless the user asks for code. Write maths in plain text (x^2, 3/4, sqrt(9)). Keep paragraphs short and use simple '- ' lists only when they help.";
+
+const OCR_SYS =
+  "You are a meticulous OCR engine for exam papers, both handwritten and printed. Transcribe EVERY word, number, symbol, label and table on the page exactly as written, in reading order, keeping question numbers and line breaks. Do not fix spelling, grammar or maths, and do not answer or comment. Write crossed-out text as [crossed out: ...], unreadable text as [illegible], diagrams as [diagram: short description], and tables as rows separated by ' | '. Write maths in plain text (x^2, 3/4), never LaTeX. Output only the transcription.";
+
+const GRADE_SYS = `You are a strict, meticulous, impartial examiner. You receive a MARK SCHEME and the transcription of a student's answers (OCR, so minor transcription noise is possible). Mark every question.
+Rules:
+- Use ONLY the mark scheme. Award marks point by point exactly as it specifies, respecting "accept", "do not accept", alternative answers and error-carried-forward rules. Never award a mark the student's words do not earn, and never invent text the student did not write.
+- If the mark scheme gives no marks for a question, infer them from brackets or the structure. Mark sub-parts separately (1a, 1b...). Include every question in the mark scheme, even unanswered ones (awarded 0).
+- If the transcription is [illegible] where an answer should be, mark what is readable and say so in the issue.
+- student_answer must quote the student's transcribed answer faithfully (or "No answer found").
+- correct_answer is the full correct answer according to the mark scheme.
+- points lists each mark scheme point with earned true/false.
+- mistakes lists only real errors: issue = what went wrong, fix = how to get the mark. Empty array if full marks.
+- Write plain text only: no LaTeX, no dollar signs, no markdown symbols. Maths as plain text (x^2, 3/4).
+Return JSON only in exactly this shape:
+{"overall_feedback":"2-3 sentence summary","questions":[{"id":"1a","question":"short question text","max_marks":2,"awarded":1,"student_answer":"","correct_answer":"","points":[{"text":"","earned":true}],"mistakes":[{"issue":"","fix":""}]}]}`;
+
+const parse = (s: string) =>
+  JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
+
+async function ensurePdfJsLoaded(): Promise<any> {
+  const win = window as any;
+  if (win.pdfjsLib) {
+    win.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    return win.pdfjsLib;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load PDF.js library.'));
+    document.head.appendChild(script);
+  });
+  win.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  return win.pdfjsLib;
 }
 
-function displayValue(value: unknown, fallback = 'Not provided'): string {
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return fallback;
+const jpg = (c: HTMLCanvasElement) =>
+  c.toDataURL('image/jpeg', 0.92).split(',')[1];
+
+async function toPages(f: File): Promise<Array<{ img: string; hint: string }>> {
+  if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
+    const pdfjsLib = await ensurePdfJsLoaded();
+    const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+    const out: Array<{ img: string; hint: string }> = [];
+    for (let i = 1; i <= Math.min(pdf.numPages, 30); i++) {
+      const pg = await pdf.getPage(i);
+      const vp = pg.getViewport({ scale: 2.2 });
+      const c = document.createElement('canvas');
+      c.width = vp.width;
+      c.height = vp.height;
+      await pg.render({ canvasContext: c.getContext('2d')!, viewport: vp }).promise;
+      const tc = await pg.getTextContent();
+      out.push({
+        img: jpg(c),
+        hint: tc.items
+          .map((x: any) => x.str)
+          .join(' ')
+          .trim(),
+      });
+    }
+    return out;
   }
-  return String(value);
+  const bmp = await createImageBitmap(f);
+  const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = bmp.width * k;
+  c.height = bmp.height * k;
+  const x = c.getContext('2d')!;
+  x.fillStyle = '#fff';
+  x.fillRect(0, 0, c.width, c.height);
+  x.drawImage(bmp, 0, 0, c.width, c.height);
+  return [{ img: jpg(c), hint: '' }];
 }
+
+const ocr = (p: { img: string; hint: string }, label: string) =>
+  llm({
+    system: OCR_SYS,
+    model: M().ocr,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { image: p.img },
+          {
+            text:
+              `Transcribe this page (${label}).` +
+              (p.hint.length > 30
+                ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}`
+                : ''),
+          },
+        ],
+      },
+    ],
+  });
+
+async function pool<T, R>(
+  items: T[],
+  n: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const r: R[] = [];
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (i < items.length) {
+        const k = i++;
+        r[k] = await fn(items[k]);
+      }
+    })
+  );
+  return r;
+}
+
+const EXAMINER_CSS = `
+#ai-examiner{--bg:#f5f6fa;--card:#fff;--ink:#12141c;--mute:#6a7183;--line:#e5e8f0;--acc:#4f46e5;--ok:#15a05a;--mid:#d98a06;--bad:#e03a3a;--soft:#f0f1f7;
+font-family:Manrope,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink);background:var(--bg);max-width:980px;margin:0 auto;padding:24px 16px 60px;line-height:1.55;border-radius:20px}
+@media(prefers-color-scheme:dark){#ai-examiner:not(.light-theme){--bg:#0c0e15;--card:#151822;--ink:#eef0f7;--mute:#8c94a8;--line:#252a3a;--soft:#1c2030;--acc:#8b85ff}}
+#ai-examiner.dark-theme{--bg:#0c0e15;--card:#151822;--ink:#eef0f7;--mute:#8c94a8;--line:#252a3a;--soft:#1c2030;--acc:#8b85ff}
+#ai-examiner *{box-sizing:border-box}
+#ai-examiner h2,#ai-examiner h3,#ai-examiner h4,#ai-examiner p{margin:0}
+#ai-examiner .tabs{display:inline-flex;background:var(--soft);padding:4px;border-radius:14px;margin-bottom:22px}
+#ai-examiner .tabs button{border:0;background:none;color:var(--mute);font:600 14px Manrope,sans-serif;padding:10px 22px;border-radius:10px;cursor:pointer}
+#ai-examiner .tabs button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 6px rgba(0,0,0,.12)}
+#ai-examiner .panel{display:none}#ai-examiner .panel.on{display:block}
+#ai-examiner button:focus-visible,#ai-examiner textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* chat */
+#ai-examiner .chat{display:flex;flex-direction:column;height:min(70vh,680px);background:var(--card);border:1px solid var(--line);border-radius:20px;overflow:hidden}
+#ai-examiner #msgs{flex:1;overflow-y:auto;padding:24px 22px;display:flex;flex-direction:column;gap:20px}
+#ai-examiner .empty{margin:auto;text-align:center;color:var(--mute)}#ai-examiner .empty h3{color:var(--ink);font-size:20px;margin-bottom:4px}
+#ai-examiner .m{max-width:88%;font-size:15.5px}
+#ai-examiner .m.u{align-self:flex-end;background:var(--soft);padding:10px 16px;border-radius:18px 18px 4px 18px;white-space:pre-wrap}
+#ai-examiner .m.a p{margin:0 0 10px}#ai-examiner .m.a ul{margin:0 0 10px;padding-left:20px;list-style:disc}#ai-examiner .m.a li{margin:3px 0}
+#ai-examiner .dots{display:inline-flex;gap:4px}#ai-examiner .dots i{width:6px;height:6px;border-radius:50%;background:var(--mute);animation:examiner-b 1s infinite}#ai-examiner .dots i:nth-child(2){animation-delay:.15s}#ai-examiner .dots i:nth-child(3){animation-delay:.3s}
+@keyframes examiner-b{50%{opacity:.25}}
+#ai-examiner .bar{display:flex;gap:10px;align-items:flex-end;padding:12px;border-top:1px solid var(--line)}
+#ai-examiner .bar textarea{flex:1;resize:none;border:0;background:var(--soft);color:var(--ink);font:500 15px Manrope,sans-serif;padding:12px 16px;border-radius:14px;max-height:140px}
+#ai-examiner .go{border:0;background:var(--acc);color:#fff;width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
+
+/* paper */
+#ai-examiner .zones{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+#ai-examiner .drop{background:var(--card);border:1.5px dashed var(--line);border-radius:18px;padding:16px;transition:.15s}
+#ai-examiner .drop.on{border-color:var(--acc);background:var(--soft)}
+#ai-examiner .drop label{display:block;cursor:pointer;text-align:center;padding:18px 6px}
+#ai-examiner .drop b{display:block;font-size:15px}#ai-examiner .drop small{color:var(--mute)}
+#ai-examiner .fl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+#ai-examiner .fc{background:var(--soft);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;display:inline-flex;gap:6px;align-items:center;max-width:100%}
+#ai-examiner .fc button{border:0;background:none;color:var(--mute);cursor:pointer;font-size:15px;line-height:1}
+#ai-examiner .drop textarea{width:100%;margin-top:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font:13px Manrope,sans-serif;resize:vertical;min-height:54px}
+#ai-examiner .run{margin-top:16px;width:100%;border:0;background:linear-gradient(120deg,#4f46e5,#9333ea);color:#fff;font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer}
+#ai-examiner .run:disabled{opacity:.45;cursor:not-allowed}
+#ai-examiner .prog{display:none;margin-top:16px}#ai-examiner .prog.on{display:block}
+#ai-examiner .prog .t{height:6px;background:var(--soft);border-radius:9px;overflow:hidden;margin-top:8px}
+#ai-examiner .prog .t i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4f46e5,#c026d3);transition:width .4s}
+#ai-examiner .err{margin-top:14px;padding:12px 16px;border-radius:12px;background:rgba(224,58,58,.12);color:var(--bad);display:none;font-size:14px}
+
+#ai-examiner #res{margin-top:28px}
+#ai-examiner .hero{--c:var(--ok);position:relative;overflow:hidden;display:flex;gap:30px;align-items:center;flex-wrap:wrap;padding:34px;border-radius:26px;color:#fff;
+background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--c) 70%,#000) 0%,#10121c 70%)}
+#ai-examiner .hero.mid{--c:var(--mid)}#ai-examiner .hero.bad{--c:var(--bad)}
+#ai-examiner .ringw{position:relative;width:170px;height:170px;flex:none}
+#ai-examiner .ring{width:100%;height:100%}#ai-examiner .ring circle{fill:none;stroke-width:9;stroke-linecap:round}
+#ai-examiner .trk{stroke:rgba(255,255,255,.14)}#ai-examiner .arc{stroke:#fff;filter:drop-shadow(0 0 8px var(--c));transition:stroke-dashoffset 1.6s cubic-bezier(.2,.8,.2,1)}
+#ai-examiner .pc{position:absolute;inset:0;display:grid;place-content:center;text-align:center}#ai-examiner .pc b{font-size:42px;font-weight:800;line-height:1}#ai-examiner .pc span{font-size:13px;opacity:.75}
+#ai-examiner .hi{flex:1;min-width:240px}
+#ai-examiner .hi .mk1{font-size:15px;opacity:.8}#ai-examiner .hi .big{font-size:54px;font-weight:800;line-height:1.1;letter-spacing:-1px}#ai-examiner .hi .big small{font-size:26px;opacity:.6;font-weight:600}
+#ai-examiner .hi .vd{display:inline-block;margin:8px 0 12px;padding:5px 14px;border-radius:99px;background:rgba(255,255,255,.16);font-weight:700;font-size:14px}
+#ai-examiner .hi p{opacity:.88;font-size:14.5px;max-width:56ch}
+#ai-examiner .st{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}#ai-examiner .st span{background:rgba(255,255,255,.12);padding:5px 12px;border-radius:99px;font-size:13px;font-weight:600}
+
+#ai-examiner .sec{margin:34px 0 14px;font-size:20px;font-weight:800;display:flex;align-items:center;gap:10px}
+#ai-examiner .sec em{font-style:normal;font-size:13px;font-weight:700;background:var(--soft);color:var(--mute);padding:2px 10px;border-radius:99px}
+#ai-examiner .mk{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--bad);border-radius:16px;padding:16px 20px;margin-bottom:12px}
+#ai-examiner .mkh{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+#ai-examiner .mk p{font-size:14.5px;margin-top:6px}#ai-examiner .lb{display:inline-block;font-weight:700;font-size:12.5px;color:var(--bad);margin-right:8px}#ai-examiner .lb.ok{color:var(--ok)}
+#ai-examiner .chip{font-weight:800;font-size:13px;padding:3px 11px;border-radius:99px}
+#ai-examiner .chip.ok{background:rgba(21,160,90,.14);color:var(--ok)}#ai-examiner .chip.mid{background:rgba(217,138,6,.15);color:var(--mid)}#ai-examiner .chip.bad{background:rgba(224,58,58,.13);color:var(--bad)}
+#ai-examiner .good{background:rgba(21,160,90,.1);color:var(--ok);padding:16px 20px;border-radius:16px;font-weight:600}
+#ai-examiner .qc{background:var(--card);border:1px solid var(--line);border-radius:18px;margin-bottom:14px;overflow:hidden}
+#ai-examiner .qh{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line)}
+#ai-examiner .qn{font-weight:800}#ai-examiner .qt{flex:1;color:var(--mute);font-size:14px}
+#ai-examiner .g3{display:grid;grid-template-columns:repeat(3,1fr)}
+#ai-examiner .g3>div{padding:16px 20px;font-size:14px;border-right:1px solid var(--line)}#ai-examiner .g3>div:last-child{border:0;background:rgba(21,160,90,.06)}
+#ai-examiner .g3 h4{font-size:12.5px;color:var(--mute);margin-bottom:8px}
+#ai-examiner .g3 p{margin-bottom:6px}#ai-examiner .pts{list-style:none;margin:0;padding:0}#ai-examiner .pts li{display:flex;gap:8px;margin-bottom:7px}
+#ai-examiner .pts i{font-style:normal;font-weight:800;flex:none}#ai-examiner .pts .ok i{color:var(--ok)}#ai-examiner .pts .bad i{color:var(--bad)}
+#ai-examiner .mute{color:var(--mute)}
+#ai-examiner details{margin-top:24px}#ai-examiner summary{cursor:pointer;color:var(--mute);font-weight:600;font-size:14px}
+#ai-examiner pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;font:12.5px/1.5 ui-monospace,monospace;max-height:340px;overflow:auto}
+@media(max-width:760px){#ai-examiner .zones,#ai-examiner .g3{grid-template-columns:1fr}#ai-examiner .g3>div{border-right:0;border-bottom:1px solid var(--line)}#ai-examiner .hero{padding:24px}}
+@media(prefers-reduced-motion:reduce){#ai-examiner .arc{transition:none}}
+`;
 
 export const AiScholarTab: React.FC<AiScholarTabProps> = ({
+  theme = 'light',
+  onTriggerSecurityLockdown,
   onAwardFocusXp,
 }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'paper'>('chat');
 
-  // Chatbot state
+  // Chat state & refs
+  const [chatBusy, setChatBusy] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [chatSending, setChatSending] = useState(false);
-  const [chatBubbles, setChatBubbles] = useState<ChatMessageItem[]>([]);
-  const chatHistoryRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const chatMessagesRef = useRef<HTMLDivElement | null>(null);
-  const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const histRef = useRef<LlmMessage[]>([]);
+  const ctlRef = useRef<AbortController | null>(null);
+  const msgsRef = useRef<HTMLDivElement | null>(null);
+  const inpRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Paper Correction state
-  const [answer1File, setAnswer1File] = useState<File | null>(null);
-  const [answer2File, setAnswer2File] = useState<File | null>(null);
-  const [markschemeFile, setMarkschemeFile] = useState<File | null>(null);
-  const [correcting, setCorrecting] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('');
-  const [statusError, setStatusError] = useState(false);
-  const [correctionResult, setCorrectionResult] = useState<CorrectionResponseData | null>(null);
-  const correctionResultsRef = useRef<HTMLElement | null>(null);
+  // Paper correction state & refs
+  const [files, setFiles] = useState<{ a: File[]; b: File[]; m: File[] }>({
+    a: [],
+    b: [],
+    m: [],
+  });
+  const [msText, setMsText] = useState('');
+  const [dragZone, setDragZone] = useState<'a' | 'b' | 'm' | null>(null);
+  const [running, setRunning] = useState(false);
+  const [progOn, setProgOn] = useState(false);
+  const [progText, setProgText] = useState('');
+  const [progWidth, setProgWidth] = useState(0);
+  const [errMsg, setErrMsg] = useState('');
+  const resRef = useRef<HTMLDivElement | null>(null);
 
-  const scrollChatToBottom = () => {
-    setTimeout(() => {
-      if (chatMessagesRef.current) {
-        chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
-      }
-    }, 10);
-  };
+  useEffect(() => {
+    ensurePdfJsLoaded().catch(() => {
+      // loaded on demand if needed
+    });
+  }, []);
 
-  const parseJsonSafely = async (response: Response) => {
-    const rawText = await response.text();
-    try {
-      return JSON.parse(rawText);
-    } catch {
-      if (response.status === 413 || /request entity too large/i.test(rawText)) {
-        throw new Error('The uploaded PDF payload was too large for a single request. Retrying with chunked upload.');
-      }
-      throw new Error(
-        rawText.slice(0, 180).trim() || `Server returned status ${response.status}.`
-      );
-    }
-  };
+  const canRun =
+    !running &&
+    files.a.length + files.b.length > 0 &&
+    (files.m.length > 0 || msText.trim().length > 0);
 
-  const uploadPdfFileInChunks = async (
-    file: File,
-    label: string
-  ): Promise<string> => {
-    const chunkSize = 512 * 1024; // 512 KB per chunk to avoid any proxy 413 limit
-    const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
-    const uploadId = `pdf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const handleChatSend = async () => {
+    const text = chatInput.trim();
+    if (!text || chatBusy) return;
+    if (onTriggerSecurityLockdown?.(text, 'AI Examiner Chat')) return;
 
-    for (let index = 0; index < totalChunks; index += 1) {
-      const start = index * chunkSize;
-      const end = Math.min(file.size, start + chunkSize);
-      const blobSlice = file.slice(start, end, 'application/pdf');
+    const msgs = msgsRef.current;
+    if (!msgs) return;
 
-      const chunkForm = new FormData();
-      chunkForm.append('uploadId', uploadId);
-      chunkForm.append('chunkIndex', String(index));
-      chunkForm.append('totalChunks', String(totalChunks));
-      chunkForm.append('filename', file.name);
-      chunkForm.append('chunk', blobSlice, file.name);
-
-      const pct = Math.round(((index + 1) / totalChunks) * 100);
-      setStatus(
-        `Step 1 of 3: Uploading ${label} (${pct}%)…`
-      );
-
-      const res = await fetch('/api/upload-chunk', {
-        method: 'POST',
-        headers: {
-          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
-        },
-        body: chunkForm,
-      });
-      const data = await parseJsonSafely(res);
-      if (!res.ok) {
-        throw new Error(data.error || `Failed to upload ${label}.`);
-      }
-    }
-
-    return uploadId;
-  };
-
-  const transcribePdfStatelessly = async (
-    file: File,
-    label: string
-  ): Promise<string> => {
-    const arrayBuf = await file.arrayBuffer();
-    const srcDoc = await PDFDocument.load(arrayBuf);
-    const totalPages = srcDoc.getPageCount();
-    if (totalPages < 1 || totalPages > 40) {
-      throw new Error(`${label} must contain between 1 and 40 pages.`);
-    }
-
-    const avgPageBytes = Math.ceil(file.size / Math.max(1, totalPages));
-    const maxBytesPerBatch = 2 * 1024 * 1024; // 2 MB per stateless request
-    const pagesPerBatch = Math.max(
-      1,
-      Math.min(4, Math.floor(maxBytesPerBatch / Math.max(1, avgPageBytes)))
-    );
-
-    const parts: string[] = [];
-    for (let i = 0; i < totalPages; i += pagesPerBatch) {
-      const startPage = i + 1;
-      const endPage = Math.min(totalPages, i + pagesPerBatch);
-      const indices: number[] = [];
-      for (let p = i; p < endPage; p += 1) {
-        indices.push(p);
-      }
-
-      const subDoc = await PDFDocument.create();
-      const copied = await subDoc.copyPages(srcDoc, indices);
-      for (const page of copied) {
-        subDoc.addPage(page);
-      }
-      const subBytes = await subDoc.save();
-      const sliceBlob = new Blob([subBytes as unknown as BlobPart], {
-        type: 'application/pdf',
-      });
-
-      setStatus(
-        `Step 1 of 3: Reading & transcribing ${label} (pages ${startPage}–${endPage} of ${totalPages})…`
-      );
-
-      const batchForm = new FormData();
-      batchForm.append('label', label);
-      batchForm.append('startPage', String(startPage));
-      batchForm.append('endPage', String(endPage));
-      batchForm.append('siteKey', 'key_ps5gnQ9rlp4xSCl6');
-      batchForm.append('chunk', sliceBlob, file.name);
-
-      const res = await fetch('/api/transcribe-batch', {
-        method: 'POST',
-        headers: {
-          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
-        },
-        body: batchForm,
-      });
-      const data = await parseJsonSafely(res);
-      if (!res.ok) {
-        throw new Error(data.error || `Failed to transcribe ${label}.`);
-      }
-      if (data.text) {
-        parts.push(String(data.text).trim());
-      }
-    }
-
-    return parts.join('\n\n');
-  };
-
-  const handleChatSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const message = chatInput.trim();
-    if (!message || chatSending) return;
-
-    chatHistoryRef.current.push({ role: 'user', content: message });
-    const userBubbleId = `user-${Date.now()}`;
-    const thinkingBubbleId = `assistant-${Date.now() + 1}`;
-
-    setChatBubbles((prev) => [
-      ...prev,
-      { id: userBubbleId, role: 'user', content: message },
-      { id: thinkingBubbleId, role: 'assistant', content: 'Thinking…' },
-    ]);
+    msgs.querySelector('#emp')?.remove();
     setChatInput('');
-    setChatSending(true);
-    scrollChatToBottom();
+    if (inpRef.current) {
+      inpRef.current.style.height = 'auto';
+    }
 
+    msgs.insertAdjacentHTML(
+      'beforeend',
+      `<div class="m u">${esc(text)}</div><div class="m a"><span class="dots"><i></i><i></i><i></i></span></div>`
+    );
+    const box = msgs.lastElementChild as HTMLElement;
+    msgs.scrollTop = msgs.scrollHeight;
+
+    histRef.current.push({ role: 'user', content: text });
+    setChatBusy(true);
+    const ctl = new AbortController();
+    ctlRef.current = ctl;
+
+    let acc = '';
+    let raf = 0;
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
+      acc = await llm({
+        system: CHAT_SYS,
+        model: M().chat,
+        stream: true,
+        signal: ctl.signal,
+        messages: histRef.current.slice(-20),
+        onToken: (t) => {
+          acc = t;
+          if (!raf) {
+            raf = requestAnimationFrame(() => {
+              raf = 0;
+              box.innerHTML = fmt(acc);
+              msgs.scrollTop = msgs.scrollHeight;
+            });
+          }
         },
-        body: JSON.stringify({
-          siteKey: 'key_ps5gnQ9rlp4xSCl6',
-          messages: chatHistoryRef.current.slice(-20),
-        }),
       });
-      const data = await parseJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(data.error || 'The chatbot request failed.');
+      box.innerHTML = fmt(acc);
+      histRef.current.push({ role: 'assistant', content: acc });
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        box.innerHTML = fmt(acc || 'Stopped.');
+        if (acc) histRef.current.push({ role: 'assistant', content: acc });
+      } else {
+        box.innerHTML = `<p style="color:var(--bad)">${esc(e?.message || 'Request failed')}</p>`;
+        histRef.current.pop();
       }
-
-      const answerText = data.answer || 'Please ask your question again.';
-      chatHistoryRef.current.push({ role: 'assistant', content: answerText });
-
-      setChatBubbles((prev) =>
-        prev.map((b) =>
-          b.id === thinkingBubbleId ? { ...b, content: answerText } : b
-        )
-      );
-      if (onAwardFocusXp) onAwardFocusXp(10);
-    } catch (error: any) {
-      const errMsg = error?.message || 'Something went wrong. Please try again.';
-      setChatBubbles((prev) =>
-        prev.map((b) =>
-          b.id === thinkingBubbleId
-            ? { ...b, content: errMsg, isError: true }
-            : b
-        )
-      );
-    } finally {
-      setChatSending(false);
-      chatTextareaRef.current?.focus();
-      scrollChatToBottom();
     }
+    setChatBusy(false);
+    msgs.scrollTop = msgs.scrollHeight;
   };
 
-  const setStatus = (message: string, isError = false) => {
-    setStatusMessage(message);
-    setStatusError(isError);
-  };
-
-  const handleCorrectionSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (!answer1File || !markschemeFile) {
-      setStatus(
-        'Please upload Answer Paper 1 and the Mark Scheme PDF. Answer Paper 2 is optional.',
-        true
-      );
-      return;
-    }
-
-    const filesToCheck = [answer1File, answer2File, markschemeFile].filter(
-      Boolean
-    ) as File[];
-
-    for (const file of filesToCheck) {
-      if (
-        file.type !== 'application/pdf' &&
-        !file.name.toLowerCase().endsWith('.pdf')
-      ) {
-        setStatus(`${file.name} is not a PDF file.`, true);
-        return;
-      }
-      if (file.size > 50 * 1024 * 1024) {
-        setStatus(`${file.name} is larger than 50 MB.`, true);
-        return;
-      }
-    }
-
-    setCorrecting(true);
-    setCorrectionResult(null);
-    setStatus(
-      'Step 1 of 3: Uploading your PDFs and reading every page. Handwriting and diagram labels are checked by the vision-capable model. This can take a little while for long papers.'
+  const addFilesToZone = (k: 'a' | 'b' | 'm', fileList: FileList | null) => {
+    if (!fileList) return;
+    const valid = Array.from(fileList).filter(
+      (f) => /pdf|image/.test(f.type) || /\.pdf$/i.test(f.name)
     );
+    if (!valid.length) return;
+    setFiles((prev) => ({
+      ...prev,
+      [k]: [...prev[k], ...valid],
+    }));
+  };
 
+  const removeFileFromZone = (k: 'a' | 'b' | 'm', index: number) => {
+    setFiles((prev) => ({
+      ...prev,
+      [k]: prev[k].filter((_, i) => i !== index),
+    }));
+  };
+
+  const status = (t: string, p: number) => {
+    setProgOn(true);
+    setProgText(t);
+    setProgWidth(p);
+  };
+
+  const renderResults = (r: any, T: { a: string; b: string; m: string }) => {
+    const resEl = resRef.current;
+    if (!resEl) return;
+
+    const qs = (r.questions || []).map((q: any) => {
+      const max = Math.max(0, +q.max_marks || 0);
+      const aw = Math.min(max, Math.max(0, +q.awarded || 0));
+      return {
+        ...q,
+        max,
+        aw,
+        st: aw >= max ? 'ok' : aw > 0 ? 'mid' : 'bad',
+      };
+    });
+    const got = qs.reduce((s: number, q: any) => s + q.aw, 0);
+    const tot = qs.reduce((s: number, q: any) => s + q.max, 0);
+    const pct = tot ? Math.round((got / tot) * 100) : 0;
+    const n = (x: number) => +x.toFixed(2);
+    const cls = pct >= 70 ? '' : pct >= 45 ? 'mid' : 'bad';
+    const verdict =
+      pct >= 90
+        ? 'Outstanding'
+        : pct >= 75
+        ? 'Strong result'
+        : pct >= 60
+        ? 'Good effort'
+        : pct >= 40
+        ? 'Getting there'
+        : 'Needs more work';
+    const cnt = (s: string) => qs.filter((q: any) => q.st === s).length;
+    const wrong = qs.filter((q: any) => (q.mistakes || []).length || q.aw < q.max);
+    const C = 326.7;
+
+    resEl.innerHTML = `
+  <div class="hero ${cls}">
+    <div class="ringw"><svg class="ring" viewBox="0 0 120 120"><circle class="trk" cx="60" cy="60" r="52"/><circle class="arc" id="arc" cx="60" cy="60" r="52" stroke-dasharray="${C}" stroke-dashoffset="${C}" transform="rotate(-90 60 60)"/></svg>
+      <div class="pc"><b id="pnum">0</b><span>percent</span></div></div>
+    <div class="hi"><div class="mk1">Your mark</div>
+      <div class="big">${n(got)}<small> / ${n(tot)}</small></div>
+      <div class="vd">${verdict}</div>
+      <p>${inl(r.overall_feedback || '')}</p>
+      <div class="st"><span>${cnt('ok')} full marks</span><span>${cnt('mid')} partial</span><span>${cnt('bad')} no marks</span></div></div>
+  </div>
+  <h3 class="sec">Mistakes made <em>${wrong.length}</em></h3>
+  ${
+    wrong.length
+      ? wrong
+          .map(
+            (q: any) =>
+              `<div class="mk"><div class="mkh"><b>Question ${inl(q.id)}</b><span class="chip bad">−${n(
+                q.max - q.aw
+              )} mark${q.max - q.aw === 1 ? '' : 's'}</span></div>
+    ${
+      (q.mistakes || [])
+        .map(
+          (m: any) =>
+            `<p><span class="lb">What went wrong</span>${inl(m.issue)}</p><p><span class="lb ok">How to fix it</span>${inl(m.fix)}</p>`
+        )
+        .join('') || `<p class="mute">Marks were lost against the mark scheme.</p>`
+    }</div>`
+          )
+          .join('')
+      : `<div class="good">No mistakes found. Every mark was earned.</div>`
+  }
+  <h3 class="sec">Right answers vs mark scheme</h3>
+  ${qs
+    .map(
+      (q: any) =>
+        `<div class="qc"><div class="qh"><span class="qn">Q${inl(q.id)}</span><span class="qt">${inl(
+          q.question || ''
+        )}</span><span class="chip ${q.st}">${n(q.aw)} / ${n(q.max)}</span></div>
+    <div class="g3">
+      <div><h4>Your answer</h4>${fmt(q.student_answer) || `<p class="mute">No answer found</p>`}</div>
+      <div><h4>Mark scheme points</h4><ul class="pts">${(q.points || [])
+        .map(
+          (p: any) =>
+            `<li class="${p.earned ? 'ok' : 'bad'}"><i>${p.earned ? '✓' : '✗'}</i><span>${inl(
+              p.text
+            )}</span></li>`
+        )
+        .join('')}</ul></div>
+      <div><h4>Correct answer</h4>${fmt(q.correct_answer)}</div>
+    </div></div>`
+    )
+    .join('')}
+  <details><summary>Extracted text (check the OCR)</summary><pre>${esc(
+    'PART 1\n' + T.a + '\n\nPART 2\n' + T.b
+  )}</pre></details>`;
+
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const arcEl = resEl.querySelector('#arc') as SVGCircleElement | null;
+        if (arcEl) {
+          arcEl.style.strokeDashoffset = String(C * (1 - pct / 100));
+        }
+        const el = resEl.querySelector('#pnum');
+        const t0 = performance.now();
+        if (el) {
+          (function tick(t: number) {
+            const p = Math.min(1, (t - t0) / 1500);
+            el.textContent = String(Math.round(pct * (1 - Math.pow(1 - p, 3))));
+            if (p < 1) requestAnimationFrame(tick);
+          })(t0);
+        }
+      })
+    );
+    resEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleRunCorrection = async () => {
+    setRunning(true);
+    setErrMsg('');
+    if (resRef.current) {
+      resRef.current.innerHTML = '';
+    }
     try {
-      let data: any = null;
-
-      try {
-        const transcripts: TranscriptItem[] = [];
-        const a1Text = await transcribePdfStatelessly(
-          answer1File,
-          'Answer PDF 1'
-        );
-        transcripts.push({ label: 'Answer PDF 1', text: a1Text });
-
-        if (answer2File) {
-          const a2Text = await transcribePdfStatelessly(
-            answer2File,
-            'Answer PDF 2'
+      const jobs: Array<{
+        k: 'a' | 'b' | 'm';
+        p: { img: string; hint: string };
+        l: string;
+      }> = [];
+      for (const k of ['a', 'b', 'm'] as const) {
+        for (const f of files[k]) {
+          status('Preparing ' + f.name, 3);
+          const pages = await toPages(f);
+          pages.forEach((p, i) =>
+            jobs.push({ k, p, l: `${f.name}, page ${i + 1}` })
           );
-          transcripts.push({ label: 'Answer PDF 2', text: a2Text });
-        }
-
-        const msText = await transcribePdfStatelessly(
-          markschemeFile,
-          'Mark Scheme PDF'
-        );
-        transcripts.push({ label: 'Mark Scheme PDF', text: msText });
-
-        setStatus(
-          'Step 2 of 3: Marking your transcribed answers against the official mark scheme and running an independent accuracy audit…'
-        );
-
-        const response = await fetch('/api/correct', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
-          },
-          body: JSON.stringify({
-            siteKey: 'key_ps5gnQ9rlp4xSCl6',
-            transcripts,
-          }),
-        });
-        data = await parseJsonSafely(response);
-        if (!response.ok) {
-          throw new Error(data.error || 'Paper correction failed.');
-        }
-      } catch (statelessErr: any) {
-        console.warn('Falling back to chunked upload:', statelessErr);
-        const answer1UploadId = await uploadPdfFileInChunks(
-          answer1File,
-          'Answer Paper 1'
-        );
-        const answer2UploadId = answer2File
-          ? await uploadPdfFileInChunks(answer2File, 'Answer Paper 2')
-          : undefined;
-        const markschemeUploadId = await uploadPdfFileInChunks(
-          markschemeFile,
-          'Mark Scheme'
-        );
-
-        setStatus(
-          'Step 2 of 3: Transcribing every PDF page, marking against the scheme, and running an independent accuracy audit…'
-        );
-
-        const response = await fetch('/api/correct', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
-          },
-          body: JSON.stringify({
-            siteKey: 'key_ps5gnQ9rlp4xSCl6',
-            answer1UploadId,
-            answer2UploadId,
-            markschemeUploadId,
-          }),
-        });
-        data = await parseJsonSafely(response);
-        if (!response.ok) {
-          throw new Error(data.error || 'Paper correction failed.');
         }
       }
-
-      setStatus(
-        'Step 2 of 3: Transcription complete. Step 3 of 3: Marking and independently checking the marks are complete.'
-      );
-
-      setCorrectionResult({
-        notice: data.notice || '',
-        marking: data.marking || '',
-        audit: data.audit || '',
-        transcripts: Array.isArray(data.transcripts) ? data.transcripts : [],
+      let d = 0;
+      const out = await pool(jobs, 3, async (j) => {
+        const t = await ocr(j.p, j.l);
+        status(
+          `Reading text ${++d} of ${jobs.length} pages`,
+          5 + (d / jobs.length) * 60
+        );
+        return { k: j.k, t: `[${j.l}]\n${t}` };
       });
-
-      setStatus(
-        'Done. Review the marking report, independent verification, and full transcriptions below. Check any uncertain handwriting against your original PDFs.'
+      const T = { a: '', b: '', m: msText.trim() };
+      out.forEach((o) => {
+        T[o.k] += (T[o.k] ? '\n\n' : '') + o.t;
+      });
+      const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS, PART 1:\n${
+        T.a || '(none)'
+      }\n\nSTUDENT ANSWERS, PART 2:\n${T.b || '(none)'}`;
+      status('Marking against the mark scheme', 70);
+      const draft = parse(
+        await llm({
+          system: GRADE_SYS,
+          model: M().grade,
+          json: true,
+          messages: [
+            {
+              role: 'user',
+              content: ctx + '\n\nMark every question now. Return JSON only.',
+            },
+          ],
+        })
       );
-      if (onAwardFocusXp) onAwardFocusXp(50);
-
-      setTimeout(() => {
-        correctionResultsRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        });
-      }, 50);
-    } catch (error: any) {
-      setStatus(
-        error?.message || 'Something went wrong. Please try again.',
-        true
-      );
+      status('Double-checking every mark', 88);
+      let final = draft;
+      try {
+        final = parse(
+          await llm({
+            system: GRADE_SYS,
+            model: M().grade,
+            json: true,
+            messages: [
+              {
+                role: 'user',
+                content:
+                  ctx +
+                  '\n\nDRAFT MARKING:\n' +
+                  JSON.stringify(draft) +
+                  "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only.",
+              },
+            ],
+          })
+        );
+        if (!Array.isArray(final.questions) || !final.questions.length) {
+          final = draft;
+        }
+      } catch {
+        final = draft;
+      }
+      if (!Array.isArray(final.questions) || !final.questions.length) {
+        throw new Error(
+          'No questions could be marked. Check the mark scheme and answer scans.'
+        );
+      }
+      status('Done', 100);
+      renderResults(final, T);
+      onAwardFocusXp?.(50);
+    } catch (e: any) {
+      setErrMsg(e?.message || 'Paper check failed.');
+      setProgOn(false);
     } finally {
-      setCorrecting(false);
+      setRunning(false);
     }
-  };
-
-  const renderStructuredResults = () => {
-    if (!correctionResult) return null;
-
-    const report =
-      typeof correctionResult.marking === 'object' && correctionResult.marking !== null
-        ? (correctionResult.marking as StructuredMarkingReport)
-        : null;
-    const audit =
-      typeof correctionResult.audit === 'object' && correctionResult.audit !== null
-        ? (correctionResult.audit as StructuredAuditReport)
-        : null;
-
-    if (!report) {
-      return (
-        <>
-          <div className="result-section">
-            <h4>Marking Report</h4>
-            <pre className="result-text">{String(correctionResult.marking || '')}</pre>
-          </div>
-          <div className="result-section">
-            <h4>Independent Audit Verification</h4>
-            <pre className="result-text">{String(correctionResult.audit || '')}</pre>
-          </div>
-        </>
-      );
-    }
-
-    const mark = formatNumber(report.overall_mark);
-    const max = formatNumber(report.maximum_mark);
-    const percent =
-      typeof report.percentage === 'number' && Number.isFinite(report.percentage)
-        ? `${Math.round(report.percentage)}%`
-        : '—';
-    const overallScoreText =
-      mark !== null && max !== null
-        ? `${mark} / ${max}`
-        : mark !== null
-        ? mark
-        : 'See breakdown';
-
-    const questions = Array.isArray(report.question_breakdown)
-      ? report.question_breakdown
-      : [];
-    const mistakes = Array.isArray(report.mistakes) ? report.mistakes : [];
-    const comparisons = Array.isArray(report.correct_answers)
-      ? report.correct_answers
-      : [];
-
-    const vMark = formatNumber(audit?.verified_mark);
-    const vMax = formatNumber(audit?.verified_maximum);
-    const vTotal =
-      vMark !== null && vMax !== null
-        ? `${vMark} / ${vMax}`
-        : 'Requires human verification';
-    const auditStatus = audit?.audit_status || 'human_review';
-
-    return (
-      <>
-        <div className="score-hero">
-          <div>
-            <div className="score-label">Estimated Overall Score</div>
-            <div className="score-number" id="score-number">
-              {overallScoreText}
-            </div>
-            <div className="score-summary">
-              {displayValue(
-                report.summary,
-                'Completed structured marking against the official mark scheme.'
-              )}
-            </div>
-          </div>
-          <div className="score-percent-box">
-            <span className="score-percent">{percent}</span>
-            <span className="score-percent-label">Percentage</span>
-          </div>
-        </div>
-
-        <div className="result-section">
-          <h4>Question-by-Question Breakdown</h4>
-          <div className="stack-list" id="question-list">
-            {questions.length === 0 ? (
-              <div className="item-card">
-                <div className="field-row">No individual questions were identified.</div>
-              </div>
-            ) : (
-              questions.map((q, idx) => {
-                const qAwarded = formatNumber(q.awarded_marks);
-                const qMax = formatNumber(q.maximum_marks);
-                const qScore =
-                  qAwarded !== null && qMax !== null
-                    ? `${qAwarded} / ${qMax}`
-                    : 'Marks N/A';
-                const status = q.status || 'unclear';
-                return (
-                  <div className="item-card" key={`${q.question}-${idx}`}>
-                    <div className="item-head">
-                      <span className="item-title">
-                        {displayValue(q.question, 'Question')} · {qScore}
-                      </span>
-                      <span className={`status-chip ${status}`}>
-                        {status.replace(/_/g, ' ')}
-                      </span>
-                    </div>
-                    <div className="field-row">
-                      <strong>Student evidence:</strong>{' '}
-                      {displayValue(q.student_evidence)}
-                    </div>
-                    <div className="field-row">
-                      <strong>Marking decision:</strong>{' '}
-                      {displayValue(q.marking_decision)}
-                    </div>
-                    <div className="field-row">
-                      <strong>Improvement:</strong> {displayValue(q.improvement)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div className="result-section">
-          <h4>Mistakes &amp; Lost Marks</h4>
-          <div className="stack-list">
-            {mistakes.length === 0 ? (
-              <div className="item-card">
-                <div className="field-row">
-                  No specific mistakes or lost-mark items were flagged.
-                </div>
-              </div>
-            ) : (
-              mistakes.map((m, idx) => (
-                <div className="item-card" key={`${m.question}-${idx}`}>
-                  <div className="item-head">
-                    <span className="item-title">
-                      {displayValue(m.question, 'Question')}
-                    </span>
-                    <span className="status-chip incorrect">Lost mark</span>
-                  </div>
-                  <div className="field-row">
-                    <strong>Mistake:</strong> {displayValue(m.mistake)}
-                  </div>
-                  <div className="field-row">
-                    <strong>Why marks were lost:</strong>{' '}
-                    {displayValue(m.why_marks_lost)}
-                  </div>
-                  <div className="field-row">
-                    <strong>How to fix:</strong> {displayValue(m.fix)}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="result-section">
-          <h4>Correct Answers &amp; Mark Scheme Comparison</h4>
-          <div className="stack-list">
-            {comparisons.length === 0 ? (
-              <div className="item-card">
-                <div className="field-row">No model answer comparisons available.</div>
-              </div>
-            ) : (
-              comparisons.map((c, idx) => (
-                <div className="item-card" key={`${c.question}-${idx}`}>
-                  <div className="item-head">
-                    <span className="item-title">
-                      {displayValue(c.question, 'Question')}
-                    </span>
-                  </div>
-                  <div className="comparison-grid">
-                    <div className="comparison-box">
-                      <h5>Student&apos;s Answer</h5>
-                      <div>{displayValue(c.student_answer)}</div>
-                    </div>
-                    <div className="comparison-box">
-                      <h5>Model Answer</h5>
-                      <div>{displayValue(c.model_answer)}</div>
-                    </div>
-                  </div>
-                  <div className="field-row" style={{ marginTop: 10 }}>
-                    <strong>Mark scheme points:</strong>
-                    <ul className="bullet-list">
-                      {(Array.isArray(c.mark_scheme_points) &&
-                      c.mark_scheme_points.length > 0
-                        ? c.mark_scheme_points
-                        : ['None listed']
-                      ).map((pt, pIdx) => (
-                        <li key={pIdx}>{pt}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div className="field-row">
-                    <strong>Comparison:</strong> {displayValue(c.comparison)}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="result-section">
-          <h4>Strengths, Review Required &amp; Marking Notes</h4>
-          <div className="stack-list">
-            {[
-              ['Strengths', report.strengths],
-              [
-                'Questions / Handwriting Requiring Human Review',
-                report.review_required,
-              ],
-              ['Marking Notes & Assumptions', report.marking_notes],
-            ].map(([label, items]) => {
-              const list =
-                Array.isArray(items) && items.length > 0
-                  ? (items as string[])
-                  : ['None noted.'];
-              return (
-                <div className="item-card" key={String(label)}>
-                  <div className="item-title" style={{ marginBottom: 6 }}>
-                    {label}
-                  </div>
-                  <ul className="bullet-list">
-                    {list.map((entry, idx) => (
-                      <li key={idx}>{entry}</li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="result-section">
-          <h4>Independent Audit Verification</h4>
-          {audit ? (
-            <div className="item-card">
-              <div className="item-head">
-                <span className="item-title">Verified Total: {vTotal}</span>
-                <span className={`status-chip ${auditStatus}`}>
-                  {auditStatus.replace(/_/g, ' ')}
-                </span>
-              </div>
-              <div className="field-row">
-                <strong>Arithmetic check:</strong>{' '}
-                {displayValue(audit.arithmetic_check)}
-              </div>
-              <div className="field-row">
-                <strong>Issues flagged:</strong>
-                <ul className="bullet-list">
-                  {(Array.isArray(audit.issues) && audit.issues.length > 0
-                    ? audit.issues
-                    : ['None']
-                  ).map((issue, idx) => (
-                    <li key={idx}>{issue}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="field-row">
-                <strong>Required corrections:</strong>
-                <ul className="bullet-list">
-                  {(Array.isArray(audit.corrections) &&
-                  audit.corrections.length > 0
-                    ? audit.corrections
-                    : ['None']
-                  ).map((corr, idx) => (
-                    <li key={idx}>{corr}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="field-row">
-                <strong>Final note:</strong> {displayValue(audit.final_note)}
-              </div>
-            </div>
-          ) : (
-            <div className="item-card">
-              <pre className="result-text">
-                {displayValue(correctionResult.audit)}
-              </pre>
-            </div>
-          )}
-        </div>
-      </>
-    );
   };
 
   return (
-    <div className="ai-examiner-root">
-      <style>{`
-        .ai-examiner-root {
-          --ink: #172033;
-          --muted: #667085;
-          --line: #e6eaf1;
-          --panel: #ffffff;
-          --page: #f6f8fc;
-          --brand: #3156d8;
-          --brand-dark: #2445b8;
-          --soft: #edf2ff;
-          --green: #147d55;
-          --green-soft: #e9f8f1;
-          --amber: #9a5b13;
-          --amber-soft: #fff6e6;
-          --red: #b42318;
-          --red-soft: #fef3f2;
-          --shadow: 0 16px 48px rgba(31, 48, 88, .08);
-          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          color: var(--ink);
-        }
-        .ai-examiner-root * { box-sizing: border-box; }
-        .ai-examiner-root button,
-        .ai-examiner-root input,
-        .ai-examiner-root textarea { font: inherit; }
-        .ai-examiner-root .shell { width: min(1060px, 100%); margin: 12px auto 48px; }
-        .ai-examiner-root .hero { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 24px; }
-        .ai-examiner-root .eyebrow { color: var(--brand); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-        .ai-examiner-root h1 { margin: 7px 0 8px; font-size: clamp(30px, 5vw, 42px); line-height: 1.1; letter-spacing: -.04em; font-weight: 800; color: var(--ink); }
-        .ai-examiner-root .sub { margin: 0; color: var(--muted); max-width: 650px; line-height: 1.6; font-size: 15px; }
-        .ai-examiner-root .secure { display: inline-flex; align-items: center; gap: 8px; color: #475467; background: #fff; border: 1px solid var(--line); padding: 10px 13px; border-radius: 999px; white-space: nowrap; font-size: 13px; }
-        .ai-examiner-root .dot { width: 8px; height: 8px; background: #16a36a; border-radius: 50%; }
-        .ai-examiner-root .app { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); overflow: hidden; }
-        .ai-examiner-root .tabs { display: flex; gap: 6px; padding: 12px; border-bottom: 1px solid var(--line); background: #fbfcff; }
-        .ai-examiner-root .tab { border: 0; color: #667085; background: transparent; padding: 12px 17px; border-radius: 12px; cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: 9px; font-size: 14px; }
-        .ai-examiner-root .tab[aria-selected="true"] { color: var(--brand); background: var(--soft); }
-        .ai-examiner-root .tab svg { width: 18px; height: 18px; }
-        .ai-examiner-root .panel { display: none; padding: 26px; background: #ffffff; color: var(--ink); }
-        .ai-examiner-root .panel.active { display: block; }
-        .ai-examiner-root .section-head { display: flex; justify-content: space-between; align-items: start; gap: 18px; margin-bottom: 20px; }
-        .ai-examiner-root h2 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.025em; font-weight: 750; color: var(--ink); }
-        .ai-examiner-root .hint { color: var(--muted); margin: 0; font-size: 14px; line-height: 1.55; }
-        .ai-examiner-root .tag { font-size: 12px; font-weight: 700; color: #475467; border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px; white-space: nowrap; background: #fff; }
-        .ai-examiner-root .upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
-        .ai-examiner-root .upload-card { border: 1px dashed #cbd3e1; border-radius: 16px; padding: 18px; background: #fcfdff; min-height: 182px; display: flex; flex-direction: column; cursor: pointer; }
-        .ai-examiner-root .upload-card:focus-within { outline: 3px solid #dce5ff; border-color: var(--brand); }
-        .ai-examiner-root .upload-icon { width: 40px; height: 40px; display: grid; place-items: center; background: var(--soft); color: var(--brand); border-radius: 12px; margin-bottom: 13px; }
-        .ai-examiner-root .upload-icon svg { width: 20px; height: 20px; }
-        .ai-examiner-root .upload-title { font-weight: 750; margin-bottom: 5px; color: var(--ink); font-size: 15px; }
-        .ai-examiner-root .upload-copy { font-size: 13px; color: var(--muted); line-height: 1.5; }
-        .ai-examiner-root .file-pick { margin-top: auto; padding-top: 14px; }
-        .ai-examiner-root .file-pick input { width: 100%; font-size: 13px; color: var(--muted); }
-        .ai-examiner-root .file-pick input::file-selector-button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 9px; padding: 7px 10px; margin-right: 10px; cursor: pointer; font-weight: 650; }
-        .ai-examiner-root .file-name { margin-top: 7px; font-size: 12px; color: var(--green); font-weight: 650; word-break: break-word; }
-        .ai-examiner-root .actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
-        .ai-examiner-root .primary { border: 0; background: var(--brand); color: #fff; padding: 12px 18px; border-radius: 12px; font-weight: 750; cursor: pointer; transition: background .15s ease; }
-        .ai-examiner-root .primary:hover:not(:disabled) { background: var(--brand-dark); }
-        .ai-examiner-root .primary:disabled { opacity: .6; cursor: wait; }
-        .ai-examiner-root .status { display: none; margin-top: 16px; padding: 13px 15px; border-radius: 13px; border: 1px solid #d7e2ff; background: #f5f8ff; font-size: 14px; line-height: 1.5; color: var(--ink); }
-        .ai-examiner-root .status.error { border-color: #fecdca; background: #fef3f2; color: var(--red); }
-        .ai-examiner-root .status.show { display: block; }
-        .ai-examiner-root .results { display: none; margin-top: 22px; gap: 16px; flex-direction: column; }
-        .ai-examiner-root .results.show { display: flex; }
-        .ai-examiner-root .notice { padding: 13px 15px; border-radius: 13px; background: #fffbeb; border: 1px solid #fde68a; color: #78350f; font-size: 13px; line-height: 1.5; }
-        .ai-examiner-root .score-hero { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 20px 22px; border-radius: 16px; background: linear-gradient(135deg, #172033 0%, #243863 100%); color: #fff; }
-        .ai-examiner-root .score-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #cbd5e1; margin-bottom: 6px; }
-        .ai-examiner-root .score-number { font-size: clamp(28px, 4vw, 38px); font-weight: 800; letter-spacing: -.04em; color: #fff; }
-        .ai-examiner-root .score-summary { margin-top: 6px; font-size: 14px; color: #e2e8f0; line-height: 1.55; max-width: 680px; }
-        .ai-examiner-root .score-percent-box { text-align: right; background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .18); padding: 12px 16px; border-radius: 14px; white-space: nowrap; }
-        .ai-examiner-root .score-percent { font-size: 29px; font-weight: 800; letter-spacing: -.04em; color: #fff; }
-        .ai-examiner-root .score-percent-label { display: block; font-size: 12px; color: #cbd5e1; }
-        .ai-examiner-root .result-section { border: 1px solid var(--line); border-radius: 16px; padding: 18px; background: #fff; }
-        .ai-examiner-root .result-section h4 { margin: 0 0 12px; font-size: 18px; letter-spacing: -.025em; font-weight: 750; color: var(--ink); }
-        .ai-examiner-root .stack-list { display: flex; flex-direction: column; gap: 12px; }
-        .ai-examiner-root .item-card { border: 1px solid var(--line); border-radius: 13px; padding: 14px 16px; background: #fcfdff; }
-        .ai-examiner-root .item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
-        .ai-examiner-root .item-title { font-weight: 750; font-size: 15px; color: var(--ink); }
-        .ai-examiner-root .status-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-        .ai-examiner-root .status-chip.correct, .ai-examiner-root .status-chip.verified { background: var(--green-soft); color: var(--green); }
-        .ai-examiner-root .status-chip.partial, .ai-examiner-root .status-chip.adjustment_needed { background: var(--amber-soft); color: var(--amber); }
-        .ai-examiner-root .status-chip.incorrect { background: var(--red-soft); color: var(--red); }
-        .ai-examiner-root .status-chip.unanswered, .ai-examiner-root .status-chip.unclear, .ai-examiner-root .status-chip.human_review { background: #f2f4f7; color: #475467; }
-        .ai-examiner-root .field-row { margin-top: 6px; font-size: 13.5px; line-height: 1.55; color: #344054; }
-        .ai-examiner-root .field-row strong { color: var(--ink); }
-        .ai-examiner-root .comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
-        .ai-examiner-root .comparison-box { border: 1px solid var(--line); border-radius: 11px; padding: 12px; background: #fff; font-size: 13.5px; line-height: 1.55; color: #344054; }
-        .ai-examiner-root .comparison-box h5 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 750; }
-        .ai-examiner-root .bullet-list { margin: 6px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; color: #344054; list-style-type: disc; }
-        .ai-examiner-root .result-text { white-space: pre-wrap; line-height: 1.65; font-size: 14px; color: #253046; margin: 0; font-family: inherit; }
-        .ai-examiner-root details { border: 1px solid var(--line); border-radius: 14px; padding: 12px 15px; background: #fbfcff; }
-        .ai-examiner-root details + details { margin-top: 10px; }
-        .ai-examiner-root summary { cursor: pointer; font-weight: 700; font-size: 14px; color: var(--ink); }
-        .ai-examiner-root .chat-box { display: grid; grid-template-rows: 430px auto; border: 1px solid var(--line); border-radius: 18px; overflow: hidden; background: #fbfcff; }
-        .ai-examiner-root .chat-messages { padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-        .ai-examiner-root .bubble { max-width: min(740px, 88%); padding: 12px 15px; border-radius: 16px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
-        .ai-examiner-root .bubble.user { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 5px; }
-        .ai-examiner-root .bubble.assistant { align-self: flex-start; background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; color: var(--ink); white-space: normal; }
-        .ai-examiner-root .bubble.assistant p { margin: 0 0 8px; }
-        .ai-examiner-root .bubble.assistant p:last-child { margin-bottom: 0; }
-        .ai-examiner-root .bubble.assistant ul { margin: 6px 0 8px; padding-left: 20px; list-style-type: disc; }
-        .ai-examiner-root .bubble.assistant ol { margin: 6px 0 8px; padding-left: 20px; list-style-type: decimal; }
-        .ai-examiner-root .bubble.assistant li { margin-bottom: 4px; }
-        .ai-examiner-root .bubble.assistant h3, .ai-examiner-root .bubble.assistant h4 { margin: 10px 0 6px; font-size: 15px; font-weight: 750; }
-        .ai-examiner-root .bubble.assistant pre { overflow-x: auto; background: #f6f7fa; border: 1px solid #eceff4; border-radius: 10px; padding: 12px 14px; margin: 8px 0; }
-        .ai-examiner-root .bubble.assistant code { background: #f2f4f7; padding: 2px 5px; border-radius: 5px; font-size: 13px; }
-        .ai-examiner-root .chat-empty { margin: auto; text-align: center; color: var(--muted); max-width: 410px; font-size: 14px; line-height: 1.6; }
-        .ai-examiner-root .chat-form { display: flex; gap: 10px; padding: 13px; background: #fff; border-top: 1px solid var(--line); }
-        .ai-examiner-root .chat-input { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; min-height: 46px; max-height: 140px; color: var(--ink); background: #fff; }
-        .ai-examiner-root .chat-input:focus { outline: 3px solid #dce5ff; border-color: var(--brand); }
-        .ai-examiner-root .footnote { margin-top: 16px; color: var(--muted); font-size: 12px; text-align: center; }
-        @media (max-width: 820px) {
-          .ai-examiner-root .hero,
-          .ai-examiner-root .section-head,
-          .ai-examiner-root .actions,
-          .ai-examiner-root .score-hero { flex-direction: column; align-items: stretch; }
-          .ai-examiner-root .upload-grid,
-          .ai-examiner-root .comparison-grid { grid-template-columns: 1fr; }
-          .ai-examiner-root .panel { padding: 18px; }
-          .ai-examiner-root .score-percent-box { text-align: left; }
-          .ai-examiner-root .score-percent-label { display: inline; margin-left: 5px; }
-        }
-      `}</style>
-
-      <main className="shell">
-        <header className="hero">
-          <div>
-            <div className="eyebrow">Your study workspace</div>
-            <h1>AI Examiner</h1>
-            <p className="sub">
-              Ask questions, upload exam papers, and receive detailed feedback
-              based on the mark scheme you provide.
-            </p>
-          </div>
-          <div className="secure">
-            <span className="dot"></span>Secure server-side AI connection
-          </div>
-        </header>
-
-        <section className="app" aria-label="AI Examiner application">
-          <nav className="tabs" role="tablist" aria-label="AI Examiner tools">
-            <button
-              className="tab"
-              id="chat-tab"
-              role="tab"
-              aria-selected={activeTab === 'chat'}
-              aria-controls="chat-panel"
-              type="button"
-              onClick={() => setActiveTab('chat')}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
-              </svg>
-              Chatbot
-            </button>
-            <button
-              className="tab"
-              id="paper-tab"
-              role="tab"
-              aria-selected={activeTab === 'paper'}
-              aria-controls="paper-panel"
-              type="button"
-              onClick={() => setActiveTab('paper')}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="m9 15 2 2 4-4" />
-              </svg>
-              Paper Correction
-            </button>
-          </nav>
-
-          <div
-            className={`panel ${activeTab === 'chat' ? 'active' : ''}`}
-            id="chat-panel"
-            role="tabpanel"
-            aria-labelledby="chat-tab"
+    <>
+      <style>{EXAMINER_CSS}</style>
+      <section
+        id="ai-examiner"
+        className={theme === 'dark' ? 'dark-theme' : 'light-theme'}
+      >
+        <div className="tabs" role="tablist">
+          <button
+            type="button"
+            className={activeTab === 'chat' ? 'on' : ''}
+            data-t="chat"
+            role="tab"
+            onClick={() => setActiveTab('chat')}
           >
-            <div className="section-head">
-              <div>
-                <h2>Chatbot</h2>
-                <p className="hint">
-                  A quick study assistant for explanations, revision, and
-                  questions.
-                </p>
-              </div>
-              <span className="tag">Fast responses</span>
-            </div>
+            Chatbot
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'paper' ? 'on' : ''}
+            data-t="paper"
+            role="tab"
+            onClick={() => setActiveTab('paper')}
+          >
+            Paper Correction
+          </button>
+        </div>
 
-            <div className="chat-box">
-              <div
-                className="chat-messages"
-                id="chat-messages"
-                aria-live="polite"
-                ref={chatMessagesRef}
-              >
-                {chatBubbles.length === 0 ? (
-                  <div className="chat-empty" id="chat-empty">
-                    Ask a question to get started. You can ask for explanations,
-                    worked examples, revision help, or quick checks.
-                  </div>
-                ) : (
-                  chatBubbles.map((bubble) =>
-                    bubble.role === 'assistant' && !bubble.isError ? (
-                      <div
-                        key={bubble.id}
-                        className="bubble assistant"
-                        dangerouslySetInnerHTML={{
-                          __html: renderAssistantMessage(bubble.content),
-                        }}
-                      />
-                    ) : (
-                      <div
-                        key={bubble.id}
-                        className={`bubble ${bubble.role}`}
-                        style={bubble.isError ? { color: '#b42318' } : undefined}
-                      >
-                        {bubble.content}
-                      </div>
-                    )
-                  )
-                )}
+        {/* CHATBOT */}
+        <div className={`panel ${activeTab === 'chat' ? 'on' : ''}`} id="p-chat">
+          <div className="chat">
+            <div id="msgs" ref={msgsRef}>
+              <div className="empty" id="emp">
+                <h3>Ask anything</h3>
+                <p>Questions, explanations, revision help.</p>
               </div>
-              <form
-                className="chat-form"
-                id="chat-form"
-                onSubmit={handleChatSubmit}
+            </div>
+            <div className="bar">
+              <textarea
+                id="inp"
+                ref={inpRef}
+                rows={1}
+                placeholder="Type your message"
+                value={chatInput}
+                onChange={(e) => {
+                  setChatInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height =
+                    Math.min(e.target.scrollHeight, 140) + 'px';
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleChatSend();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="go"
+                id="send"
+                aria-label="Send"
+                onClick={() =>
+                  chatBusy ? ctlRef.current?.abort() : handleChatSend()
+                }
               >
-                <textarea
-                  ref={chatTextareaRef}
-                  className="chat-input"
-                  id="chat-input"
-                  rows={1}
-                  placeholder="Ask your question..."
-                  aria-label="Your message"
-                  required
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleChatSubmit(e);
-                    }
+                {chatBusy ? '\u25A0' : '\u27A4'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* PAPER CORRECTION */}
+        <div className={`panel ${activeTab === 'paper' ? 'on' : ''}`} id="p-paper">
+          <div className="zones">
+            {/* Answers, part 1 */}
+            <div
+              className={`drop ${dragZone === 'a' ? 'on' : ''}`}
+              data-k="a"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragZone('a');
+              }}
+              onDragLeave={() => setDragZone(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragZone(null);
+                addFilesToZone('a', e.dataTransfer.files);
+              }}
+            >
+              <label>
+                <b>Answers, part 1</b>
+                <small>PDF or photos. Drop or click</small>
+                <input
+                  type="file"
+                  hidden
+                  multiple
+                  accept=".pdf,image/*"
+                  onChange={(e) => {
+                    addFilesToZone('a', e.target.files);
+                    e.target.value = '';
                   }}
                 />
-                <button
-                  className="primary"
-                  id="chat-send"
-                  type="submit"
-                  disabled={chatSending}
-                >
-                  {chatSending ? 'Thinking…' : 'Send'}
-                </button>
-              </form>
+              </label>
+              <div className="fl">
+                {files.a.map((f, i) => (
+                  <span key={`${f.name}-${i}`} className="fc">
+                    {f.name}
+                    <button
+                      type="button"
+                      aria-label="Remove"
+                      onClick={() => removeFileFromZone('a', i)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Answers, part 2 */}
+            <div
+              className={`drop ${dragZone === 'b' ? 'on' : ''}`}
+              data-k="b"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragZone('b');
+              }}
+              onDragLeave={() => setDragZone(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragZone(null);
+                addFilesToZone('b', e.dataTransfer.files);
+              }}
+            >
+              <label>
+                <b>Answers, part 2</b>
+                <small>Optional. PDF or photos</small>
+                <input
+                  type="file"
+                  hidden
+                  multiple
+                  accept=".pdf,image/*"
+                  onChange={(e) => {
+                    addFilesToZone('b', e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              <div className="fl">
+                {files.b.map((f, i) => (
+                  <span key={`${f.name}-${i}`} className="fc">
+                    {f.name}
+                    <button
+                      type="button"
+                      aria-label="Remove"
+                      onClick={() => removeFileFromZone('b', i)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Mark scheme */}
+            <div
+              className={`drop ${dragZone === 'm' ? 'on' : ''}`}
+              data-k="m"
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragZone('m');
+              }}
+              onDragLeave={() => setDragZone(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragZone(null);
+                addFilesToZone('m', e.dataTransfer.files);
+              }}
+            >
+              <label>
+                <b>Mark scheme</b>
+                <small>PDF or photos. Drop or click</small>
+                <input
+                  type="file"
+                  hidden
+                  multiple
+                  accept=".pdf,image/*"
+                  onChange={(e) => {
+                    addFilesToZone('m', e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              <div className="fl">
+                {files.m.map((f, i) => (
+                  <span key={`${f.name}-${i}`} className="fc">
+                    {f.name}
+                    <button
+                      type="button"
+                      aria-label="Remove"
+                      onClick={() => removeFileFromZone('m', i)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <textarea
+                id="msText"
+                placeholder="Or paste the mark scheme text here"
+                value={msText}
+                onChange={(e) => setMsText(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="run"
+            id="run"
+            disabled={!canRun}
+            onClick={handleRunCorrection}
+          >
+            Check paper
+          </button>
+
+          <div className={`prog ${progOn ? 'on' : ''}`} id="prog">
+            <span id="pt" className="mute">
+              {progText}
+            </span>
+            <div className="t">
+              <i id="pb" style={{ width: `${progWidth}%` }} />
             </div>
           </div>
 
           <div
-            className={`panel ${activeTab === 'paper' ? 'active' : ''}`}
-            id="paper-panel"
-            role="tabpanel"
-            aria-labelledby="paper-tab"
+            className="err"
+            id="err"
+            style={{ display: errMsg ? 'block' : 'none' }}
           >
-            <div className="section-head">
-              <div>
-                <h2>Paper Correction</h2>
-                <p className="hint">
-                  Upload one or two answer PDFs and the official mark scheme
-                  PDF. Every page is transcribed first, then marked against the
-                  scheme and checked in a second pass.
-                </p>
-              </div>
-              <span className="tag">Detailed marking + review</span>
-            </div>
-
-            <form id="correction-form" onSubmit={handleCorrectionSubmit}>
-              <div className="upload-grid">
-                <label className="upload-card" htmlFor="answer1">
-                  <span className="upload-icon">
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <path d="M14 2v6h6" />
-                    </svg>
-                  </span>
-                  <span className="upload-title">Answer Paper 1 *</span>
-                  <span className="upload-copy">
-                    Upload the first PDF containing your answers. Handwriting is
-                    supported; unclear words will be flagged.
-                  </span>
-                  <span className="file-pick">
-                    <input
-                      id="answer1"
-                      name="answer1"
-                      type="file"
-                      accept="application/pdf,.pdf"
-                      required
-                      onChange={(e) =>
-                        setAnswer1File(e.target.files?.[0] || null)
-                      }
-                    />
-                    <div className="file-name" id="answer1-name">
-                      {answer1File ? `Selected: ${answer1File.name}` : ''}
-                    </div>
-                  </span>
-                </label>
-
-                <label className="upload-card" htmlFor="answer2">
-                  <span className="upload-icon">
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <path d="M14 2v6h6" />
-                      <path d="M12 18v-6" />
-                      <path d="M9 15h6" />
-                    </svg>
-                  </span>
-                  <span className="upload-title">Answer Paper 2</span>
-                  <span className="upload-copy">
-                    Optional second PDF if your answers continue in another file
-                    or scan.
-                  </span>
-                  <span className="file-pick">
-                    <input
-                      id="answer2"
-                      name="answer2"
-                      type="file"
-                      accept="application/pdf,.pdf"
-                      onChange={(e) =>
-                        setAnswer2File(e.target.files?.[0] || null)
-                      }
-                    />
-                    <div className="file-name" id="answer2-name">
-                      {answer2File ? `Selected: ${answer2File.name}` : ''}
-                    </div>
-                  </span>
-                </label>
-
-                <label className="upload-card" htmlFor="markscheme">
-                  <span className="upload-icon">
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M9 11l3 3L22 4" />
-                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                    </svg>
-                  </span>
-                  <span className="upload-title">Mark Scheme *</span>
-                  <span className="upload-copy">
-                    Upload the official mark scheme PDF that should be used to
-                    assess your answers.
-                  </span>
-                  <span className="file-pick">
-                    <input
-                      id="markscheme"
-                      name="markscheme"
-                      type="file"
-                      accept="application/pdf,.pdf"
-                      required
-                      onChange={(e) =>
-                        setMarkschemeFile(e.target.files?.[0] || null)
-                      }
-                    />
-                    <div className="file-name" id="markscheme-name">
-                      {markschemeFile ? `Selected: ${markschemeFile.name}` : ''}
-                    </div>
-                  </span>
-                </label>
-              </div>
-
-              <div className="actions">
-                <p className="hint">
-                  Limits: PDF files only, up to 15 MB and 20 pages per file.
-                </p>
-                <button
-                  className="primary"
-                  id="correct-button"
-                  type="submit"
-                  disabled={correcting}
-                >
-                  {correcting ? 'Processing…' : 'Transcribe & correct papers'}
-                </button>
-              </div>
-            </form>
-
-            <div
-              className={`status ${statusMessage ? 'show' : ''} ${
-                statusError ? 'error' : ''
-              }`}
-              id="correction-status"
-              role="status"
-              aria-live="polite"
-            >
-              {statusMessage}
-            </div>
-
-            <section
-              ref={correctionResultsRef}
-              className={`results ${correctionResult ? 'show' : ''}`}
-              id="correction-results"
-              aria-live="polite"
-            >
-              {correctionResult && (
-                <>
-                  <div className="notice" id="result-notice">
-                    {correctionResult.notice}
-                  </div>
-
-                  {renderStructuredResults()}
-
-                  <div className="result-section">
-                    <h4>Full PDF Transcriptions</h4>
-                    <details>
-                      <summary>Full PDF transcriptions</summary>
-                      <div id="transcript-outputs" style={{ marginTop: 12 }}>
-                        {correctionResult.transcripts.map((item, idx) => (
-                          <details key={`${item.label}-${idx}`}>
-                            <summary>
-                              {item.label} — full OCR transcription
-                            </summary>
-                            <pre className="result-text">{item.text}</pre>
-                          </details>
-                        ))}
-                      </div>
-                    </details>
-                  </div>
-                </>
-              )}
-            </section>
+            {errMsg}
           </div>
-        </section>
 
-        <p className="footnote">
-          AI-generated feedback can contain mistakes. Always review unclear
-          handwriting and important marks against the original document.
-        </p>
-      </main>
-    </div>
+          <div id="res" ref={resRef} />
+        </div>
+      </section>
+    </>
   );
 };

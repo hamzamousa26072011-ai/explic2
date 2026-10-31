@@ -2480,6 +2480,331 @@ function buildAcademicChatResponse(
   ].join('\n');
 }
 
+// Unified LLM Proxy Endpoint for AI Examiner (supports streaming SSE, multimodal OCR, and JSON grading with key_ps5gnQ9rlp4xSCl6 / chatgpt secret)
+app.post('/api/llm', verifySiteKey, async (req, res) => {
+  try {
+    const rawMessages: any[] = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const topSystem = typeof req.body?.system === 'string' ? req.body.system : '';
+    const stream = Boolean(req.body?.stream);
+    const isJson = Boolean(
+      req.body?.json || req.body?.response_format?.type === 'json_object'
+    );
+    const temperature =
+      typeof req.body?.temperature === 'number'
+        ? req.body.temperature
+        : isJson
+        ? 0
+        : 0.5;
+    const requestedModel = String(req.body?.model || 'gpt-4o-mini');
+
+    // Separate system instructions from user/assistant messages
+    const systemParts: string[] = [];
+    if (topSystem.trim()) systemParts.push(topSystem.trim());
+
+    const convMessages: any[] = [];
+    for (const m of rawMessages) {
+      if (!m || typeof m !== 'object') continue;
+      if (m.role === 'system') {
+        if (typeof m.content === 'string' && m.content.trim()) {
+          systemParts.push(m.content.trim());
+        }
+      } else if (m.role === 'user' || m.role === 'assistant') {
+        convMessages.push(m);
+      }
+    }
+    const systemInstruction = systemParts.join('\n\n').trim();
+
+    // 1. If a direct sk-... OpenAI key is configured in env, try OpenAI first
+    const openAiKey = resolveOpenAiKey();
+    if (isDirectOpenAiApiKey(openAiKey)) {
+      const openaiClient = new OpenAI({ apiKey: openAiKey });
+      try {
+        const openAiMessages: any[] = [];
+        if (systemInstruction) {
+          openAiMessages.push({ role: 'system', content: systemInstruction });
+        }
+        for (const m of convMessages) {
+          if (typeof m.content === 'string') {
+            openAiMessages.push({ role: m.role, content: m.content });
+          } else if (Array.isArray(m.content)) {
+            openAiMessages.push({
+              role: m.role,
+              content: m.content.map((p: any) => {
+                if (p.type === 'image_url' && p.image_url?.url) {
+                  return p;
+                }
+                if (p.image) {
+                  const cleanB64 = String(p.image).replace(/^data:[^;]+;base64,/, '');
+                  return {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:image/jpeg;base64,${cleanB64}`,
+                      detail: 'high',
+                    },
+                  };
+                }
+                return { type: 'text', text: String(p.text || '') };
+              }),
+            });
+          }
+        }
+
+        if (stream) {
+          const completionStream = await openaiClient.chat.completions.create({
+            model: requestedModel.startsWith('gpt-') ? requestedModel : 'gpt-4o-mini',
+            messages: openAiMessages,
+            stream: true,
+            temperature,
+          });
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
+          for await (const chunk of completionStream) {
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) {
+              res.write(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`
+              );
+            }
+          }
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        } else {
+          const completion = await withTimeout(
+            openaiClient.chat.completions.create({
+              model: requestedModel.startsWith('gpt-') ? requestedModel : 'gpt-4o',
+              messages: openAiMessages,
+              temperature,
+              ...(isJson ? { response_format: { type: 'json_object' } } : {}),
+            }),
+            45000,
+            'OpenAI /api/llm'
+          );
+          const content = completion.choices?.[0]?.message?.content || '';
+          if (content) {
+            return res.json({
+              choices: [{ message: { role: 'assistant', content } }],
+            });
+          }
+        }
+      } catch (openAiErr: any) {
+        console.warn('OpenAI /api/llm fallback to Gemini:', openAiErr?.message || openAiErr);
+      }
+    }
+
+    // 2. Convert messages to Gemini format (works with key_ps5gnQ9rlp4xSCl6 / chatgpt secret)
+    const geminiContents: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
+    for (const m of convMessages) {
+      const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+      const parts: any[] = [];
+      if (typeof m.content === 'string') {
+        parts.push({ text: m.content });
+      } else if (Array.isArray(m.content)) {
+        for (const p of m.content) {
+          if (!p) continue;
+          if (p.type === 'image_url' && p.image_url?.url) {
+            const urlStr = String(p.image_url.url);
+            const match = urlStr.match(/^data:([^;]+);base64,(.+)$/);
+            parts.push({
+              inlineData: {
+                mimeType: match ? match[1] : 'image/jpeg',
+                data: match ? match[2] : urlStr.replace(/^data:[^;]+;base64,/, ''),
+              },
+            });
+          } else if (p.image) {
+            parts.push({
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: String(p.image).replace(/^data:[^;]+;base64,/, ''),
+              },
+            });
+          } else if (p.type === 'image' && p.source?.data) {
+            parts.push({
+              inlineData: {
+                mimeType: p.source.media_type || 'image/jpeg',
+                data: String(p.source.data).replace(/^data:[^;]+;base64,/, ''),
+              },
+            });
+          } else if (typeof p.text === 'string') {
+            parts.push({ text: p.text });
+          }
+        }
+      }
+      if (parts.length > 0) {
+        geminiContents.push({ role, parts });
+      }
+    }
+
+    const ai = getGeminiClient();
+
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+
+      let streamedAny = false;
+      if (ai && geminiContents.length > 0) {
+        for (const modelName of ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+          if (streamedAny) break;
+          try {
+            const streamResp = await ai.models.generateContentStream({
+              model: modelName,
+              contents: geminiContents,
+              config: {
+                ...(systemInstruction ? { systemInstruction } : {}),
+                temperature,
+                maxOutputTokens: 8192,
+              },
+            });
+            for await (const chunk of streamResp) {
+              const deltaText = chunk.text;
+              if (deltaText) {
+                streamedAny = true;
+                res.write(
+                  `data: ${JSON.stringify({
+                    choices: [{ delta: { content: deltaText } }],
+                  })}\n\n`
+                );
+              }
+            }
+          } catch (err) {
+            console.warn(`Gemini stream (${modelName}) error:`, err);
+          }
+        }
+
+        // If generateContentStream did not emit chunks, try standard generateContent
+        if (!streamedAny) {
+          for (const modelName of ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+            if (streamedAny) break;
+            try {
+              const resp = await withTimeout(
+                ai.models.generateContent({
+                  model: modelName,
+                  contents: geminiContents,
+                  config: {
+                    ...(systemInstruction ? { systemInstruction } : {}),
+                    temperature,
+                    maxOutputTokens: 8192,
+                  },
+                }),
+                25000,
+                `Gemini fallback chat (${modelName})`
+              );
+              const fullText = resp.text?.trim();
+              if (fullText) {
+                streamedAny = true;
+                res.write(
+                  `data: ${JSON.stringify({
+                    choices: [{ delta: { content: fullText } }],
+                  })}\n\n`
+                );
+              }
+            } catch (err) {
+              console.warn(`Gemini fallback chat (${modelName}) error:`, err);
+            }
+          }
+        }
+      }
+
+      if (!streamedAny) {
+        const plainHistory = convMessages.map((m) => ({
+          role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+          content: typeof m.content === 'string' ? m.content : '',
+        }));
+        const fallbackText = stripDollarLatex(buildAcademicChatResponse(plainHistory));
+        res.write(
+          `data: ${JSON.stringify({
+            choices: [{ delta: { content: fallbackText } }],
+          })}\n\n`
+        );
+      }
+
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
+    // Non-streaming mode (OCR and JSON Grading)
+    if (ai && geminiContents.length > 0) {
+      for (const modelName of ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+        try {
+          const response = await withTimeout(
+            ai.models.generateContent({
+              model: modelName,
+              contents: geminiContents,
+              config: {
+                ...(systemInstruction ? { systemInstruction } : {}),
+                temperature,
+                maxOutputTokens: isJson ? 16384 : 8192,
+                ...(isJson ? { responseMimeType: 'application/json' } : {}),
+              },
+            }),
+            50000,
+            `Gemini LLM (${modelName})`
+          );
+          let outText = response.text?.trim() || '';
+          if (outText) {
+            if (isJson) {
+              outText = outText
+                .replace(/^```(?:json)?\s*/i, '')
+                .replace(/\s*```$/i, '')
+                .trim();
+            }
+            return res.json({
+              choices: [{ message: { role: 'assistant', content: outText } }],
+            });
+          }
+        } catch (err) {
+          console.warn(`Gemini LLM (${modelName}) error:`, err);
+        }
+      }
+    }
+
+    // Fallback if OCR request has embedded text layer hint
+    const lastUserContent = convMessages[convMessages.length - 1]?.content;
+    if (Array.isArray(lastUserContent)) {
+      const textPart = lastUserContent.find((p: any) => typeof p?.text === 'string')?.text || '';
+      const hintIdx = textPart.indexOf('embedded text layer');
+      if (hintIdx !== -1) {
+        const colonIdx = textPart.indexOf(':\n', hintIdx);
+        if (colonIdx !== -1) {
+          const extractedHint = textPart.slice(colonIdx + 2).trim();
+          if (extractedHint) {
+            return res.json({
+              choices: [{ message: { role: 'assistant', content: extractedHint } }],
+            });
+          }
+        }
+      }
+    }
+
+    if (!isJson) {
+      const plainHistory = convMessages.map((m) => ({
+        role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: typeof m.content === 'string' ? m.content : '',
+      }));
+      return res.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: stripDollarLatex(buildAcademicChatResponse(plainHistory)),
+            },
+          },
+        ],
+      });
+    }
+
+    return res.status(500).json({
+      error: { message: 'Could not generate AI response. Please try again.' },
+    });
+  } catch (error: any) {
+    console.error('/api/llm error:', error?.message || error);
+    return res.status(500).json({
+      error: { message: error?.message || 'LLM request failed.' },
+    });
+  }
+});
+
 app.post('/api/chat', verifySiteKey, async (req, res) => {
   try {
     const messages = req.body?.messages;
