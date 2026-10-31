@@ -1572,8 +1572,8 @@ ${studentInput || '[Transcribe and mark from attached script images]'}`;
 // ============================================================================
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-6-luna';
 const EXAM_MODEL = process.env.OPENAI_EXAM_MODEL || 'gpt-6-astra';
-const MAX_FILE_BYTES = 15 * 1024 * 1024;
-const MAX_PDF_PAGES = 20;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_PDF_PAGES = 40;
 
 const examinerPdfUpload = multer({
   storage: multer.memoryStorage(),
@@ -1588,6 +1588,114 @@ const examinerPdfUpload = multer({
     callback(null, true);
   },
 });
+
+const chunkUploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+});
+
+interface StoredChunkUpload {
+  filename: string;
+  mimetype: string;
+  chunks: Map<number, Buffer>;
+  totalChunks: number;
+  updatedAt: number;
+}
+
+const uploadedPdfChunksStore = new Map<string, StoredChunkUpload>();
+
+function cleanupStaleChunkUploads() {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, entry] of uploadedPdfChunksStore.entries()) {
+    if (entry.updatedAt < cutoff) {
+      uploadedPdfChunksStore.delete(id);
+    }
+  }
+}
+
+app.post(
+  '/api/upload-chunk',
+  verifySiteKey,
+  chunkUploadMiddleware.single('chunk'),
+  (req, res) => {
+    try {
+      cleanupStaleChunkUploads();
+      const uploadId = String(req.body?.uploadId || '').trim();
+      const chunkIndex = Number(req.body?.chunkIndex);
+      const totalChunks = Number(req.body?.totalChunks);
+      const filename = String(req.body?.filename || 'document.pdf').trim();
+      const chunkFile = req.file;
+
+      if (
+        !uploadId ||
+        !Number.isInteger(chunkIndex) ||
+        chunkIndex < 0 ||
+        !Number.isInteger(totalChunks) ||
+        totalChunks < 1 ||
+        totalChunks > 200 ||
+        !chunkFile
+      ) {
+        return res.status(400).json({ error: 'Invalid upload chunk parameters.' });
+      }
+
+      let record = uploadedPdfChunksStore.get(uploadId);
+      if (!record) {
+        record = {
+          filename,
+          mimetype: 'application/pdf',
+          chunks: new Map<number, Buffer>(),
+          totalChunks,
+          updatedAt: Date.now(),
+        };
+        uploadedPdfChunksStore.set(uploadId, record);
+      }
+
+      record.chunks.set(chunkIndex, chunkFile.buffer);
+      record.updatedAt = Date.now();
+
+      return res.json({
+        ok: true,
+        uploadId,
+        chunkIndex,
+        receivedChunks: record.chunks.size,
+        totalChunks,
+      });
+    } catch (err: any) {
+      console.error('Chunk upload error:', err);
+      return res.status(500).json({ error: err?.message || 'Chunk upload failed.' });
+    }
+  }
+);
+
+function reassembleChunkedFile(uploadId?: string): Express.Multer.File | undefined {
+  if (!uploadId || typeof uploadId !== 'string') return undefined;
+  const record = uploadedPdfChunksStore.get(uploadId.trim());
+  if (!record) return undefined;
+
+  const orderedBuffers: Buffer[] = [];
+  for (let i = 0; i < record.totalChunks; i += 1) {
+    const part = record.chunks.get(i);
+    if (!part) {
+      throw new Error(`Incomplete file upload for ${record.filename} (missing chunk ${i + 1} of ${record.totalChunks}). Please try again.`);
+    }
+    orderedBuffers.push(part);
+  }
+
+  uploadedPdfChunksStore.delete(uploadId.trim());
+  const fullBuffer = Buffer.concat(orderedBuffers);
+  return {
+    fieldname: 'file',
+    originalname: record.filename,
+    encoding: '7bit',
+    mimetype: 'application/pdf',
+    size: fullBuffer.length,
+    buffer: fullBuffer,
+    destination: '',
+    filename: record.filename,
+    path: '',
+    stream: null as any,
+  };
+}
 
 function safeErrorMessage(error: any): string {
   if (error?.status === 429) {
@@ -1896,40 +2004,115 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+async function splitPdfIntoBatches(
+  buffer: Buffer,
+  maxPagesPerBatch = 4,
+  maxBytesPerBatch = 4 * 1024 * 1024
+): Promise<Array<{ startPage: number; endPage: number; base64: string }>> {
+  const srcDoc = await PDFDocument.load(buffer);
+  const totalPages = srcDoc.getPageCount();
+
+  if (totalPages <= maxPagesPerBatch && buffer.length <= maxBytesPerBatch) {
+    return [
+      {
+        startPage: 1,
+        endPage: totalPages,
+        base64: buffer.toString('base64'),
+      },
+    ];
+  }
+
+  const avgPageBytes = Math.ceil(buffer.length / Math.max(1, totalPages));
+  const pagesPerSlice = Math.max(
+    1,
+    Math.min(maxPagesPerBatch, Math.floor(maxBytesPerBatch / Math.max(1, avgPageBytes)))
+  );
+
+  const batches: Array<{ startPage: number; endPage: number; base64: string }> = [];
+  for (let i = 0; i < totalPages; i += pagesPerSlice) {
+    const pageIndices: number[] = [];
+    for (let j = i; j < Math.min(totalPages, i + pagesPerSlice); j += 1) {
+      pageIndices.push(j);
+    }
+    const subDoc = await PDFDocument.create();
+    const copied = await subDoc.copyPages(srcDoc, pageIndices);
+    for (const p of copied) {
+      subDoc.addPage(p);
+    }
+    const subBytes = await subDoc.save();
+    batches.push({
+      startPage: i + 1,
+      endPage: i + pageIndices.length,
+      base64: Buffer.from(subBytes).toString('base64'),
+    });
+  }
+  return batches;
+}
+
 async function transcribePdfWithGemini(
   file: Express.Multer.File,
   label: string
 ): Promise<string> {
   const ai = getGeminiClient();
   if (ai) {
-    const models = ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite'];
-    for (const modelName of models) {
-      try {
-        const response = await withTimeout(
-          ai.models.generateContent({
-            model: modelName,
-            contents: {
-              parts: [
-                {
-                  text: `Transcribe the complete attached ${label} PDF. Do not omit any page.`,
+    try {
+      const batches = await splitPdfIntoBatches(file.buffer, 5, 5 * 1024 * 1024);
+      const batchTranscripts: string[] = [];
+
+      for (const batch of batches) {
+        const pageRangeLabel =
+          batch.startPage === batch.endPage
+            ? `PAGE ${batch.startPage}`
+            : `PAGES ${batch.startPage} to ${batch.endPage}`;
+        let batchText = '';
+
+        for (const modelName of ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview']) {
+          try {
+            const response = await withTimeout(
+              ai.models.generateContent({
+                model: modelName,
+                contents: {
+                  parts: [
+                    {
+                      text: `Transcribe the attached ${label} PDF (${pageRangeLabel}). Use page headings starting at PAGE ${batch.startPage}. Do not omit any text, handwriting, or working.`,
+                    },
+                    {
+                      inlineData: {
+                        mimeType: 'application/pdf',
+                        data: batch.base64,
+                      },
+                    },
+                  ],
                 },
-                fileToGeminiPart(file),
-              ],
-            },
-            config: {
-              systemInstruction: TRANSCRIBE_INSTRUCTIONS,
-              temperature: 0.0,
-              maxOutputTokens: 14000,
-            },
-          }),
-          25000,
-          `Gemini transcription (${modelName})`
-        );
-        const text = response.text?.trim();
-        if (text) return text;
-      } catch (err) {
-        console.warn(`Gemini transcription (${modelName}) error:`, err);
+                config: {
+                  systemInstruction: TRANSCRIBE_INSTRUCTIONS,
+                  temperature: 0.0,
+                  maxOutputTokens: 14000,
+                },
+              }),
+              45000,
+              `Gemini transcription (${modelName}, ${pageRangeLabel})`
+            );
+            const text = response.text?.trim();
+            if (text) {
+              batchText = text;
+              break;
+            }
+          } catch (err) {
+            console.warn(`Gemini transcription (${modelName}, ${pageRangeLabel}) error:`, err);
+          }
+        }
+
+        if (batchText) {
+          batchTranscripts.push(batchText);
+        }
       }
+
+      if (batchTranscripts.length > 0) {
+        return batchTranscripts.join('\n\n');
+      }
+    } catch (splitErr) {
+      console.warn('PDF batch transcription error:', splitErr);
     }
   }
 
@@ -2045,7 +2228,7 @@ async function runStructuredJsonPass(params: {
   const ai = getGeminiClient();
   if (ai) {
     const schemaPrompt = `${params.userPrompt}\n\nIMPORTANT: Return ONLY valid JSON conforming strictly to this JSON schema (${params.schemaName}):\n${JSON.stringify(params.schema)}`;
-    const models = ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite'];
+    const models = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview'];
     for (const modelName of models) {
       try {
         const response = await withTimeout(
@@ -2059,7 +2242,7 @@ async function runStructuredJsonPass(params: {
               responseMimeType: 'application/json',
             },
           }),
-          25000,
+          45000,
           `Gemini structured pass (${modelName})`
         );
         const text = response.text?.trim();
@@ -2276,7 +2459,7 @@ app.post('/api/chat', verifySiteKey, async (req, res) => {
       const formattedConversation = cleaned
         .map((m) => `${m.role === 'user' ? 'Student' : 'Assistant'}: ${m.content}`)
         .join('\n\n');
-      const models = ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite'];
+      const models = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview'];
       for (const modelName of models) {
         try {
           const response = await withTimeout(
@@ -2289,7 +2472,7 @@ app.post('/api/chat', verifySiteKey, async (req, res) => {
                 maxOutputTokens: 900,
               },
             }),
-            12000,
+            15000,
             `Gemini Chat (${modelName})`
           );
           if (response.text?.trim()) {
@@ -2314,6 +2497,10 @@ app.post(
   '/api/correct',
   verifySiteKey,
   (req, res, next) => {
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    if (contentType.includes('application/json')) {
+      return next();
+    }
     const uploadMiddleware = examinerPdfUpload.fields([
       { name: 'answer1', maxCount: 1 },
       { name: 'answer2', maxCount: 1 },
@@ -2323,7 +2510,7 @@ app.post(
       if (err instanceof multer.MulterError) {
         const message =
           err.code === 'LIMIT_FILE_SIZE'
-            ? 'Each PDF must be 15 MB or smaller.'
+            ? 'Each PDF must be 50 MB or smaller.'
             : 'The upload exceeded the allowed number or size of files.';
         return res.status(400).json({ error: message });
       }
@@ -2335,15 +2522,25 @@ app.post(
   },
   async (req, res) => {
     const files = (req.files as Record<string, Express.Multer.File[]>) || {};
-    const answer1 = files.answer1?.[0];
-    const answer2 = files.answer2?.[0];
-    const markscheme = files.markscheme?.[0];
+    let answer1: Express.Multer.File | undefined = files.answer1?.[0];
+    let answer2: Express.Multer.File | undefined = files.answer2?.[0];
+    let markscheme: Express.Multer.File | undefined = files.markscheme?.[0];
     const uploadedIds: string[] = [];
 
     const openAiKey = resolveOpenAiKey();
     const openaiClient = openAiKey ? new OpenAI({ apiKey: openAiKey }) : null;
 
     try {
+      if (!answer1 && req.body?.answer1UploadId) {
+        answer1 = reassembleChunkedFile(req.body.answer1UploadId);
+      }
+      if (!answer2 && req.body?.answer2UploadId) {
+        answer2 = reassembleChunkedFile(req.body.answer2UploadId);
+      }
+      if (!markscheme && req.body?.markschemeUploadId) {
+        markscheme = reassembleChunkedFile(req.body.markschemeUploadId);
+      }
+
       if (!answer1 || !markscheme) {
         return res.status(400).json({
           error:

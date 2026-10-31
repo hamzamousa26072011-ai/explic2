@@ -204,6 +204,61 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     }, 10);
   };
 
+  const parseJsonSafely = async (response: Response) => {
+    const rawText = await response.text();
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      if (response.status === 413 || /request entity too large/i.test(rawText)) {
+        throw new Error('The uploaded PDF payload was too large for a single request. Retrying with chunked upload.');
+      }
+      throw new Error(
+        rawText.slice(0, 180).trim() || `Server returned status ${response.status}.`
+      );
+    }
+  };
+
+  const uploadPdfFileInChunks = async (
+    file: File,
+    label: string
+  ): Promise<string> => {
+    const chunkSize = 512 * 1024; // 512 KB per chunk to avoid any proxy 413 limit
+    const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
+    const uploadId = `pdf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    for (let index = 0; index < totalChunks; index += 1) {
+      const start = index * chunkSize;
+      const end = Math.min(file.size, start + chunkSize);
+      const blobSlice = file.slice(start, end, 'application/pdf');
+
+      const chunkForm = new FormData();
+      chunkForm.append('uploadId', uploadId);
+      chunkForm.append('chunkIndex', String(index));
+      chunkForm.append('totalChunks', String(totalChunks));
+      chunkForm.append('filename', file.name);
+      chunkForm.append('chunk', blobSlice, file.name);
+
+      const pct = Math.round(((index + 1) / totalChunks) * 100);
+      setStatus(
+        `Step 1 of 3: Uploading ${label} (${pct}%)…`
+      );
+
+      const res = await fetch('/api/upload-chunk', {
+        method: 'POST',
+        headers: {
+          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
+        },
+        body: chunkForm,
+      });
+      const data = await parseJsonSafely(res);
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to upload ${label}.`);
+      }
+    }
+
+    return uploadId;
+  };
+
   const handleChatSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const message = chatInput.trim();
@@ -234,7 +289,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
           messages: chatHistoryRef.current.slice(-20),
         }),
       });
-      const data = await response.json();
+      const data = await parseJsonSafely(response);
       if (!response.ok) {
         throw new Error(data.error || 'The chatbot request failed.');
       }
@@ -292,16 +347,11 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         setStatus(`${file.name} is not a PDF file.`, true);
         return;
       }
-      if (file.size > 15 * 1024 * 1024) {
-        setStatus(`${file.name} is larger than 15 MB.`, true);
+      if (file.size > 50 * 1024 * 1024) {
+        setStatus(`${file.name} is larger than 50 MB.`, true);
         return;
       }
     }
-
-    const formData = new FormData();
-    formData.append('answer1', answer1File);
-    if (answer2File) formData.append('answer2', answer2File);
-    formData.append('markscheme', markschemeFile);
 
     setCorrecting(true);
     setCorrectionResult(null);
@@ -310,14 +360,36 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     );
 
     try {
+      const answer1UploadId = await uploadPdfFileInChunks(
+        answer1File,
+        'Answer Paper 1'
+      );
+      const answer2UploadId = answer2File
+        ? await uploadPdfFileInChunks(answer2File, 'Answer Paper 2')
+        : undefined;
+      const markschemeUploadId = await uploadPdfFileInChunks(
+        markschemeFile,
+        'Mark Scheme'
+      );
+
+      setStatus(
+        'Step 2 of 3: Transcribing every PDF page, marking against the scheme, and running an independent accuracy audit…'
+      );
+
       const response = await fetch('/api/correct', {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
         },
-        body: formData,
+        body: JSON.stringify({
+          siteKey: 'key_ps5gnQ9rlp4xSCl6',
+          answer1UploadId,
+          answer2UploadId,
+          markschemeUploadId,
+        }),
       });
-      const data = await response.json();
+      const data = await parseJsonSafely(response);
       if (!response.ok) {
         throw new Error(data.error || 'Paper correction failed.');
       }
