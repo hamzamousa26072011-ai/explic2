@@ -420,27 +420,71 @@ correctionForm.addEventListener("submit", async (event) => {
   setStatus("Step 1 of 3: Uploading your PDFs and reading every page. Handwriting and diagram labels are checked by the vision-capable model. This can take a little while for long papers.");
 
   try {
-    const answer1UploadId = await uploadPdfFileInChunks(answer1, "Answer Paper 1");
-    const answer2UploadId = answer2 ? await uploadPdfFileInChunks(answer2, "Answer Paper 2") : undefined;
-    const markschemeUploadId = await uploadPdfFileInChunks(markscheme, "Mark Scheme");
+    let data = null;
 
-    setStatus("Step 2 of 3: Transcribing every PDF page, marking against the scheme, and running an independent accuracy audit…");
+    if (answer1.size <= 3.5 * 1024 * 1024 && (!answer2 || answer2.size <= 3.5 * 1024 * 1024) && markscheme.size <= 3.5 * 1024 * 1024) {
+      const transcribeOne = async (file, label) => {
+        setStatus(`Step 1 of 3: Reading & transcribing ${label}…`);
+        const fd = new FormData();
+        fd.append("label", label);
+        fd.append("startPage", "1");
+        fd.append("endPage", "1");
+        fd.append("siteKey", "key_ps5gnQ9rlp4xSCl6");
+        fd.append("chunk", file, file.name);
+        const res = await fetch("/api/transcribe-batch", {
+          method: "POST",
+          headers: { "x-site-key": "key_ps5gnQ9rlp4xSCl6" },
+          body: fd
+        });
+        const parsed = await parseJsonSafely(res);
+        if (!res.ok) throw new Error(parsed.error || `Failed to transcribe ${label}.`);
+        return parsed.text || "";
+      };
 
-    const response = await fetch("/api/correct", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-site-key": "key_ps5gnQ9rlp4xSCl6"
-      },
-      body: JSON.stringify({
-        siteKey: "key_ps5gnQ9rlp4xSCl6",
-        answer1UploadId,
-        answer2UploadId,
-        markschemeUploadId
-      })
-    });
-    const data = await parseJsonSafely(response);
-    if (!response.ok) throw new Error(data.error || "Paper correction failed.");
+      const transcripts = [];
+      transcripts.push({ label: "Answer PDF 1", text: await transcribeOne(answer1, "Answer PDF 1") });
+      if (answer2) {
+        transcripts.push({ label: "Answer PDF 2", text: await transcribeOne(answer2, "Answer PDF 2") });
+      }
+      transcripts.push({ label: "Mark Scheme PDF", text: await transcribeOne(markscheme, "Mark Scheme PDF") });
+
+      setStatus("Step 2 of 3: Marking against the scheme and running an independent accuracy audit…");
+      const response = await fetch("/api/correct", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-site-key": "key_ps5gnQ9rlp4xSCl6"
+        },
+        body: JSON.stringify({
+          siteKey: "key_ps5gnQ9rlp4xSCl6",
+          transcripts
+        })
+      });
+      data = await parseJsonSafely(response);
+      if (!response.ok) throw new Error(data.error || "Paper correction failed.");
+    } else {
+      const answer1UploadId = await uploadPdfFileInChunks(answer1, "Answer Paper 1");
+      const answer2UploadId = answer2 ? await uploadPdfFileInChunks(answer2, "Answer Paper 2") : undefined;
+      const markschemeUploadId = await uploadPdfFileInChunks(markscheme, "Mark Scheme");
+
+      setStatus("Step 2 of 3: Transcribing every PDF page, marking against the scheme, and running an independent accuracy audit…");
+
+      const response = await fetch("/api/correct", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-site-key": "key_ps5gnQ9rlp4xSCl6"
+        },
+        body: JSON.stringify({
+          siteKey: "key_ps5gnQ9rlp4xSCl6",
+          answer1UploadId,
+          answer2UploadId,
+          markschemeUploadId
+        })
+      });
+      data = await parseJsonSafely(response);
+      if (!response.ok) throw new Error(data.error || "Paper correction failed.");
+    }
 
     setStatus("Step 2 of 3: Transcription complete. Step 3 of 3: Marking and independently checking the marks are complete.");
     document.getElementById("result-notice").textContent = data.notice;

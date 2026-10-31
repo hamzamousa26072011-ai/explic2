@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { PDFDocument } from 'pdf-lib';
 import { ThemeMode } from '../types';
 
 interface AiScholarTabProps {
@@ -259,6 +260,73 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     return uploadId;
   };
 
+  const transcribePdfStatelessly = async (
+    file: File,
+    label: string
+  ): Promise<string> => {
+    const arrayBuf = await file.arrayBuffer();
+    const srcDoc = await PDFDocument.load(arrayBuf);
+    const totalPages = srcDoc.getPageCount();
+    if (totalPages < 1 || totalPages > 40) {
+      throw new Error(`${label} must contain between 1 and 40 pages.`);
+    }
+
+    const avgPageBytes = Math.ceil(file.size / Math.max(1, totalPages));
+    const maxBytesPerBatch = 2 * 1024 * 1024; // 2 MB per stateless request
+    const pagesPerBatch = Math.max(
+      1,
+      Math.min(4, Math.floor(maxBytesPerBatch / Math.max(1, avgPageBytes)))
+    );
+
+    const parts: string[] = [];
+    for (let i = 0; i < totalPages; i += pagesPerBatch) {
+      const startPage = i + 1;
+      const endPage = Math.min(totalPages, i + pagesPerBatch);
+      const indices: number[] = [];
+      for (let p = i; p < endPage; p += 1) {
+        indices.push(p);
+      }
+
+      const subDoc = await PDFDocument.create();
+      const copied = await subDoc.copyPages(srcDoc, indices);
+      for (const page of copied) {
+        subDoc.addPage(page);
+      }
+      const subBytes = await subDoc.save();
+      const sliceBlob = new Blob([subBytes as unknown as BlobPart], {
+        type: 'application/pdf',
+      });
+
+      setStatus(
+        `Step 1 of 3: Reading & transcribing ${label} (pages ${startPage}–${endPage} of ${totalPages})…`
+      );
+
+      const batchForm = new FormData();
+      batchForm.append('label', label);
+      batchForm.append('startPage', String(startPage));
+      batchForm.append('endPage', String(endPage));
+      batchForm.append('siteKey', 'key_ps5gnQ9rlp4xSCl6');
+      batchForm.append('chunk', sliceBlob, file.name);
+
+      const res = await fetch('/api/transcribe-batch', {
+        method: 'POST',
+        headers: {
+          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
+        },
+        body: batchForm,
+      });
+      const data = await parseJsonSafely(res);
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to transcribe ${label}.`);
+      }
+      if (data.text) {
+        parts.push(String(data.text).trim());
+      }
+    }
+
+    return parts.join('\n\n');
+  };
+
   const handleChatSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const message = chatInput.trim();
@@ -360,38 +428,84 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     );
 
     try {
-      const answer1UploadId = await uploadPdfFileInChunks(
-        answer1File,
-        'Answer Paper 1'
-      );
-      const answer2UploadId = answer2File
-        ? await uploadPdfFileInChunks(answer2File, 'Answer Paper 2')
-        : undefined;
-      const markschemeUploadId = await uploadPdfFileInChunks(
-        markschemeFile,
-        'Mark Scheme'
-      );
+      let data: any = null;
 
-      setStatus(
-        'Step 2 of 3: Transcribing every PDF page, marking against the scheme, and running an independent accuracy audit…'
-      );
+      try {
+        const transcripts: TranscriptItem[] = [];
+        const a1Text = await transcribePdfStatelessly(
+          answer1File,
+          'Answer PDF 1'
+        );
+        transcripts.push({ label: 'Answer PDF 1', text: a1Text });
 
-      const response = await fetch('/api/correct', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
-        },
-        body: JSON.stringify({
-          siteKey: 'key_ps5gnQ9rlp4xSCl6',
-          answer1UploadId,
-          answer2UploadId,
-          markschemeUploadId,
-        }),
-      });
-      const data = await parseJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(data.error || 'Paper correction failed.');
+        if (answer2File) {
+          const a2Text = await transcribePdfStatelessly(
+            answer2File,
+            'Answer PDF 2'
+          );
+          transcripts.push({ label: 'Answer PDF 2', text: a2Text });
+        }
+
+        const msText = await transcribePdfStatelessly(
+          markschemeFile,
+          'Mark Scheme PDF'
+        );
+        transcripts.push({ label: 'Mark Scheme PDF', text: msText });
+
+        setStatus(
+          'Step 2 of 3: Marking your transcribed answers against the official mark scheme and running an independent accuracy audit…'
+        );
+
+        const response = await fetch('/api/correct', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
+          },
+          body: JSON.stringify({
+            siteKey: 'key_ps5gnQ9rlp4xSCl6',
+            transcripts,
+          }),
+        });
+        data = await parseJsonSafely(response);
+        if (!response.ok) {
+          throw new Error(data.error || 'Paper correction failed.');
+        }
+      } catch (statelessErr: any) {
+        console.warn('Falling back to chunked upload:', statelessErr);
+        const answer1UploadId = await uploadPdfFileInChunks(
+          answer1File,
+          'Answer Paper 1'
+        );
+        const answer2UploadId = answer2File
+          ? await uploadPdfFileInChunks(answer2File, 'Answer Paper 2')
+          : undefined;
+        const markschemeUploadId = await uploadPdfFileInChunks(
+          markschemeFile,
+          'Mark Scheme'
+        );
+
+        setStatus(
+          'Step 2 of 3: Transcribing every PDF page, marking against the scheme, and running an independent accuracy audit…'
+        );
+
+        const response = await fetch('/api/correct', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-site-key': 'key_ps5gnQ9rlp4xSCl6',
+          },
+          body: JSON.stringify({
+            siteKey: 'key_ps5gnQ9rlp4xSCl6',
+            answer1UploadId,
+            answer2UploadId,
+            markschemeUploadId,
+          }),
+        });
+        data = await parseJsonSafely(response);
+        if (!response.ok) {
+          throw new Error(data.error || 'Paper correction failed.');
+        }
       }
 
       setStatus(
