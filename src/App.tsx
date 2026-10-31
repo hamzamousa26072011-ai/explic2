@@ -699,40 +699,11 @@ export default function App() {
               )}
 
               {activeTab === 'scholar' && (
-                <div className="space-y-4">
-                  {profile.isGuest && (
-                    <div
-                      className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                        isLight
-                          ? 'bg-indigo-50/80 border-indigo-200 text-[#0F172A]'
-                          : 'bg-indigo-950/30 border-indigo-500/30 text-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 text-xs">
-                        <Lock className="w-4 h-4 text-indigo-500 shrink-0" />
-                        <span>
-                          <strong>Sign In Required for AI Examiner:</strong> Sign in with Google or complete Two-Step Email Verification to unlock AI Past Paper Marking.
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsAuthModalOpen(true)}
-                        className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 ${
-                          isLight
-                            ? 'bg-[#0F172A] text-white'
-                            : 'bg-[#6366F1] text-white'
-                        }`}
-                      >
-                        Sign In / Verify Now
-                      </button>
-                    </div>
-                  )}
-                  <AiScholarTab
-                    theme={theme}
-                    onTriggerSecurityLockdown={handleTriggerSecurityLockdown}
-                    onAwardFocusXp={(xp) => handleAwardFocusXp(xp, 0)}
-                  />
-                </div>
+                <AiScholarTab
+                  theme={theme}
+                  onTriggerSecurityLockdown={handleTriggerSecurityLockdown}
+                  onAwardFocusXp={(xp) => handleAwardFocusXp(xp, 0)}
+                />
               )}
 
               {activeTab === 'planner' && (
