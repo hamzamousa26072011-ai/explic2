@@ -136,8 +136,35 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
 
         {/* Header */}
         <div className="space-y-2 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-500 mx-auto">
-            <ShieldCheck className="w-6 h-6" />
+          <div
+            className={`inline-flex items-center justify-center w-12 h-12 rounded-2xl border mx-auto ${
+              isLight
+                ? 'bg-white border-[#DCE3EC] shadow-xs'
+                : 'bg-[#090D16] border-white/15'
+            }`}
+          >
+            <svg
+              viewBox="0 0 64 64"
+              className="w-6 h-6"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M44 16H20V48H44"
+                stroke={isLight ? '#1E293B' : '#F8FAFC'}
+                strokeWidth="4.4"
+                strokeLinecap="square"
+                strokeLinejoin="miter"
+              />
+              <path
+                d="M20 32H28.5L32.5 35.6L36.5 32H42.5"
+                stroke={isLight ? '#1E293B' : '#F8FAFC'}
+                strokeWidth="4.2"
+                strokeLinecap="square"
+                strokeLinejoin="round"
+              />
+            </svg>
           </div>
           <h2
             id="auth-gate-modal-title"

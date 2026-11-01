@@ -13,7 +13,7 @@ export const EngezBrandLogo: React.FC<EngezBrandLogoProps> = ({
   onClickRefresh,
 }) => {
   const isLight = theme === 'warm';
-  const strokeColor = isLight ? '#2C3A47' : '#F8FAFC';
+  const strokeColor = isLight ? '#1E293B' : '#F8FAFC';
 
   const handleRefresh = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -24,6 +24,39 @@ export const EngezBrandLogo: React.FC<EngezBrandLogoProps> = ({
     }
   };
 
+  const renderLogoBadge = (sizeClass = 'w-9 h-9') => (
+    <div
+      className={`flex items-center justify-center ${sizeClass} rounded-[13px] border transition-transform duration-200 group-hover:scale-105 shrink-0 ${
+        isLight
+          ? 'bg-white border-[#DCE3EC] shadow-[0_1px_3px_rgba(15,23,42,0.04)]'
+          : 'bg-[#111827] border-white/15 shadow-[0_1px_3px_rgba(0,0,0,0.25)]'
+      }`}
+    >
+      <svg
+        viewBox="0 0 64 64"
+        className="w-5 h-5"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        <path
+          d="M44 16H20V48H44"
+          stroke={strokeColor}
+          strokeWidth="4.4"
+          strokeLinecap="square"
+          strokeLinejoin="miter"
+        />
+        <path
+          d="M20 32H28.5L32.5 35.6L36.5 32H42.5"
+          stroke={strokeColor}
+          strokeWidth="4.2"
+          strokeLinecap="square"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+
   return (
     <a
       href="/"
@@ -33,42 +66,14 @@ export const EngezBrandLogo: React.FC<EngezBrandLogoProps> = ({
       className="inline-flex items-center gap-2.5 select-none cursor-pointer group focus:outline-none"
     >
       {collapsed ? (
-        <div
-          className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-transform group-hover:scale-105 ${
-            isLight
-              ? 'bg-white border-[#E2E8F0] text-[#2C3A47]'
-              : 'bg-[#111827] border-white/15 text-[#F8FAFC]'
-          }`}
-        >
-          <svg
-            viewBox="0 0 60 60"
-            className="w-6 h-6"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            {/* Custom stylized E from EXPLiC logo */}
-            <path
-              d="M46 12H14V48H46"
-              stroke={strokeColor}
-              strokeWidth="4.5"
-              strokeLinecap="square"
-              strokeLinejoin="miter"
-            />
-            <path
-              d="M14 30H25L30 33.5L35 30H44"
-              stroke={strokeColor}
-              strokeWidth="4.2"
-              strokeLinecap="butt"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
+        renderLogoBadge('w-10 h-10')
       ) : (
-        <div className="flex items-center transition-opacity group-hover:opacity-85">
-          {/* Exact vector recreation of the uploaded EXPLiC wordmark logo (compact size) */}
+        <div className="flex items-center gap-2.5 transition-opacity group-hover:opacity-90">
+          {renderLogoBadge('w-9 h-9')}
+          {/* Vector recreation of the EXPLiC wordmark logo */}
           <svg
             viewBox="0 0 330 72"
-            className="h-5 sm:h-6 w-auto"
+            className="h-5 w-auto"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
             role="img"
