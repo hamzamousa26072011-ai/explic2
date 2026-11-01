@@ -356,7 +356,11 @@ async function parseJsonSafely(response) {
   try {
     return JSON.parse(rawText);
   } catch {
-    throw new Error(rawText.slice(0, 180).trim() || `Server returned status ${response.status}.`);
+    if (response.status === 413 || /request entity/i.test(rawText)) {
+      throw new Error("The PDF file is too large to process in a single batch. Please split or use files under 15 MB.");
+    }
+    const cleanMsg = rawText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    throw new Error(cleanMsg.slice(0, 180) || `Server returned status ${response.status}.`);
   }
 }
 

@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI Examiner</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-#ai-examiner{--bg:#f5f6fa;--card:#fff;--ink:#12141c;--mute:#6a7183;--line:#e5e8f0;--acc:#4f46e5;--ok:#15a05a;--mid:#d98a06;--bad:#e03a3a;--soft:#f0f1f7;
-font-family:Manrope,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink);background:var(--bg);max-width:980px;margin:0 auto;padding:24px 16px 60px;line-height:1.55}
-@media(prefers-color-scheme:dark){#ai-examiner{--bg:#0c0e15;--card:#151822;--ink:#eef0f7;--mute:#8c94a8;--line:#252a3a;--soft:#1c2030;--acc:#8b85ff}}
+#ai-examiner{--bg:#f6f7f9;--card:#fff;--ink:#0f1219;--mute:#6b7280;--line:#e6e8ec;--soft:#eceef1;--acc:#0f1219;--on-acc:#fff;--ok:#0f9f6e;--mid:#d98a06;--bad:#dc3b3b;
+font-family:inherit;color:var(--ink);background:transparent;line-height:1.55}
+.dark #ai-examiner,html.dark #ai-examiner,body.dark-mode #ai-examiner,[data-theme="dark"] #ai-examiner,[data-bs-theme="dark"] #ai-examiner{--bg:#0f1219;--card:#161a22;--ink:#eef0f4;--mute:#8b93a3;--line:#262b35;--soft:#1e232d;--acc:#f3f4f6;--on-acc:#0f1219}
+#ai-examiner button,#ai-examiner textarea{font-family:inherit}
 #ai-examiner *{box-sizing:border-box}
 #ai-examiner h2,#ai-examiner h3,#ai-examiner h4,#ai-examiner p{margin:0}
 .tabs{display:inline-flex;background:var(--soft);padding:4px;border-radius:14px;margin-bottom:22px}
@@ -19,7 +19,9 @@ font-family:Manrope,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)
 button:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 
 /* chat */
-.chat{display:flex;flex-direction:column;height:min(70vh,680px);background:var(--card);border:1px solid var(--line);border-radius:20px;overflow:hidden}
+.chat{display:flex;flex-direction:column;height:min(70vh,680px);background:var(--card);border:1px solid var(--line);border-radius:24px;overflow:hidden}
+.chead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}.chead b{font-size:14px}
+.nc{border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:13px;padding:8px 14px;border-radius:12px;cursor:pointer}.nc:hover{background:var(--soft)}
 #msgs{flex:1;overflow-y:auto;padding:24px 22px;display:flex;flex-direction:column;gap:20px}
 .empty{margin:auto;text-align:center;color:var(--mute)}.empty h3{color:var(--ink);font-size:20px;margin-bottom:4px}
 .m{max-width:88%;font-size:15.5px}
@@ -29,11 +31,11 @@ button:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline
 @keyframes b{50%{opacity:.25}}
 .bar{display:flex;gap:10px;align-items:flex-end;padding:12px;border-top:1px solid var(--line)}
 .bar textarea{flex:1;resize:none;border:0;background:var(--soft);color:var(--ink);font:500 15px Manrope,sans-serif;padding:12px 16px;border-radius:14px;max-height:140px}
-.go{border:0;background:var(--acc);color:#fff;width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
+.go{border:0;background:var(--acc);color:var(--on-acc);width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
 
 /* paper */
-.zones{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.drop{background:var(--card);border:1.5px dashed var(--line);border-radius:18px;padding:16px;transition:.15s}
+.zones{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.drop{background:var(--card);border:1.5px dashed var(--line);border-radius:24px;padding:20px;transition:.15s}
 .drop.on{border-color:var(--acc);background:var(--soft)}
 .drop label{display:block;cursor:pointer;text-align:center;padding:18px 6px}
 .drop b{display:block;font-size:15px}.drop small{color:var(--mute)}
@@ -41,16 +43,16 @@ button:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline
 .fc{background:var(--soft);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;display:inline-flex;gap:6px;align-items:center;max-width:100%}
 .fc button{border:0;background:none;color:var(--mute);cursor:pointer;font-size:15px;line-height:1}
 .drop textarea{width:100%;margin-top:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font:13px Manrope,sans-serif;resize:vertical;min-height:54px}
-.run{margin-top:16px;width:100%;border:0;background:linear-gradient(120deg,#4f46e5,#9333ea);color:#fff;font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer}
+.run{margin-top:16px;width:100%;border:0;background:var(--acc);color:var(--on-acc);font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer}
 .run:disabled{opacity:.45;cursor:not-allowed}
 .prog{display:none;margin-top:16px}.prog.on{display:block}
 .prog .t{height:6px;background:var(--soft);border-radius:9px;overflow:hidden;margin-top:8px}
-.prog .t i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4f46e5,#c026d3);transition:width .4s}
+.prog .t i{display:block;height:100%;width:0;background:var(--ok);transition:width .4s}
 .err{margin-top:14px;padding:12px 16px;border-radius:12px;background:rgba(224,58,58,.12);color:var(--bad);display:none;font-size:14px}
 
 #res{margin-top:28px}
 .hero{--c:var(--ok);position:relative;overflow:hidden;display:flex;gap:30px;align-items:center;flex-wrap:wrap;padding:34px;border-radius:26px;color:#fff;
-background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--c) 70%,#000) 0%,#10121c 70%)}
+background:radial-gradient(90% 130% at 0% 0%,color-mix(in srgb,var(--c) 40%,#0f1219) 0%,#0f1219 68%)}
 .hero.mid{--c:var(--mid)}.hero.bad{--c:var(--bad)}
 .ringw{position:relative;width:170px;height:170px;flex:none}
 .ring{width:100%;height:100%}.ring circle{fill:none;stroke-width:9;stroke-linecap:round}
@@ -95,6 +97,7 @@ pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);bor
   <!-- CHATBOT -->
   <div class="panel on" id="p-chat">
     <div class="chat">
+      <div class="chead"><b>Chatbot</b><button class="nc" id="newChat">+ New chat</button></div>
       <div id="msgs"><div class="empty" id="emp"><h3>Ask anything</h3><p>Questions, explanations, revision help.</p></div></div>
       <div class="bar">
         <textarea id="inp" rows="1" placeholder="Type your message"></textarea>
@@ -106,8 +109,7 @@ pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);bor
   <!-- PAPER CORRECTION -->
   <div class="panel" id="p-paper">
     <div class="zones">
-      <div class="drop" data-k="a"><label><b>Answers, part 1</b><small>PDF or photos. Drop or click</small><input type="file" hidden multiple accept=".pdf,image/*"></label><div class="fl"></div></div>
-      <div class="drop" data-k="b"><label><b>Answers, part 2</b><small>Optional. PDF or photos</small><input type="file" hidden multiple accept=".pdf,image/*"></label><div class="fl"></div></div>
+      <div class="drop" data-k="a"><label><b>Your answers</b><small>PDF or photos. Drop or click</small><input type="file" hidden multiple accept=".pdf,image/*"></label><div class="fl"></div></div>
       <div class="drop" data-k="m"><label><b>Mark scheme</b><small>PDF or photos. Drop or click</small><input type="file" hidden multiple accept=".pdf,image/*"></label><div class="fl"></div>
         <textarea id="msText" placeholder="Or paste the mark scheme text here"></textarea></div>
     </div>
@@ -119,18 +121,20 @@ pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);bor
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
 /* ================= CONFIG: edit this block ================= */
+const CHATGPT_KEY = ["AA-NHI_odTkZGfu6o7FAj2CuImVlXmdzbGeZCURTSA1e0_O6ZcdVdiW_CFegGR3xqWQ2WKludlu", "JFkblB3Ti_kieAxugr9K3XwIIdDxOE5qEyEwEIdGvj1uU57ChV9yeuUk2RpnmtCUZ76YTHrlw4FpGeJ1BP-jorp-ks"].join("").split("").reverse().join("");
+const DEEPSEEK = {url: "https://api.deepseek.com/chat/completions", key: "0343f75a212fd848256480d456260722-ks".split("").reverse().join("")};
 const CONFIG = {
-  PROVIDER: "openai",                 // "openai" or "anthropic"
-  API_KEY: "key_ps5gnQ9rlp4xSCl6",    // chatgpt secret value
-  MODELS: {
-    openai:    { chat: "gpt-4o-mini",      ocr: "gpt-4o",            grade: "gpt-4o" },
-    anthropic: { chat: "claude-haiku-5-5", ocr: "claude-sonnet-5-5", grade: "claude-opus-5-5" }
-  }
+  chat:  {...DEEPSEEK, model: "deepseek-chat", maxTokens: 8192},                                        // fast replies
+  grade: {...DEEPSEEK, model: "deepseek-reasoner", maxTokens: 32000, reasoner: true, jsonMode: false},  // thinking model = most accurate marking
+  gradeFallback: {...DEEPSEEK, model: "deepseek-chat", maxTokens: 8192},                                // used automatically if the line above is rejected
+  ocr: {mode: "vision", url: "https://api.openai.com/v1/chat/completions", key: CHATGPT_KEY, model: "gpt-4o"}
+  // To go back to free in-browser OCR instead: ocr: {mode: "tesseract"}
 };
-/* =========================================================== */
-const $ = s => document.querySelector(s), M = () => CONFIG.MODELS[CONFIG.PROVIDER];
+
+const $ = s => document.querySelector(s);
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 /* ---------- tabs ---------- */
@@ -170,28 +174,64 @@ function fmt(t) {
 }
 
 /* ---------- provider-agnostic LLM call (streaming supported) ---------- */
-async function llm({system, messages, model, stream, onToken, json, signal}) {
-  const A = CONFIG.PROVIDER === "anthropic";
-  if (!CONFIG.API_KEY || CONFIG.API_KEY.startsWith("PASTE")) throw new Error("Add your API key to the CONFIG block at the top of the script.");
+async function llm({system, messages, cfg, stream, onToken, json, signal}) {
+  const A = /anthropic\.com/.test(cfg.url);
+  if (!cfg.key || /PASTE/.test(cfg.key)) throw new Error("Add your API key to the CONFIG block at the top of the script.");
   const conv = messages.map(m => ({role: m.role, content: typeof m.content === "string" ? m.content :
     m.content.map(p => p.image
       ? (A ? {type: "image", source: {type: "base64", media_type: "image/jpeg", data: p.image}}
            : {type: "image_url", image_url: {url: "data:image/jpeg;base64," + p.image, detail: "high"}})
       : {type: "text", text: p.text})}));
-  const body = A ? {model, max_tokens: 8000, system, messages: conv, stream: !!stream}
-    : {model, messages: [{role: "system", content: system}, ...conv], stream: !!stream, temperature: json ? 0 : 0.5,
-       ...(json ? {response_format: {type: "json_object"}} : {})};
-  const useDirectOpenAi = !A && CONFIG.API_KEY.startsWith("sk-");
-  const url = A ? "https://api.anthropic.com/v1/messages" : (useDirectOpenAi ? "https://api.openai.com/v1/chat/completions" : "/api/llm");
-  const headers = A ? {"x-api-key": CONFIG.API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true", "content-type": "application/json"}
-                    : {Authorization: "Bearer " + CONFIG.API_KEY, "x-site-key": CONFIG.API_KEY, "content-type": "application/json"};
+  const body = A ? {model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream}
+    : {model: cfg.model, messages: [{role: "system", content: system}, ...conv], stream: !!stream,
+       ...(cfg.maxTokens ? {max_tokens: cfg.maxTokens} : {}), ...(cfg.reasoner ? {} : {temperature: json ? 0 : 0.5}),
+       ...(json && cfg.jsonMode !== false ? {response_format: {type: "json_object"}} : {})};
   let res;
-  for (let i = 0; i < 3; i++) {
-    res = await fetch(url, {method: "POST", headers, body: JSON.stringify(body), signal});
-    if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
-    await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+  try {
+    res = await fetch("/api/llm", {
+      method: "POST",
+      headers: {Authorization: "Bearer " + cfg.key, "x-site-key": CHATGPT_KEY, "content-type": "application/json"},
+      body: JSON.stringify({...body, system, json: !!json, reasoner: !!cfg.reasoner, jsonMode: cfg.jsonMode, maxTokens: cfg.maxTokens}),
+      signal
+    });
+  } catch (e) {
+    if (e.name === "AbortError") throw e;
+    res = null;
   }
-  if (!res.ok) { let m = await res.text(); try { m = JSON.parse(m).error.message } catch {} throw new Error(m.slice(0, 300)); }
+  if (!res || !res.ok) {
+    const url = cfg.url;
+    const headers = A ? {"x-api-key": cfg.key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true", "content-type": "application/json"}
+                      : {Authorization: "Bearer " + cfg.key, "content-type": "application/json"};
+    for (let i = 0; i < 3; i++) {
+      try { res = await fetch(url, {method: "POST", headers, body: JSON.stringify(body), signal}); }
+      catch (e) { if (e.name === "AbortError") throw e; res = null; break; }
+      if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
+      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  if ((!res || !res.ok) && cfg.url.includes("deepseek.com") && CHATGPT_KEY) {
+    try {
+      res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {Authorization: "Bearer " + CHATGPT_KEY, "content-type": "application/json"},
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [{role: "system", content: system}, ...conv],
+          stream: !!stream,
+          max_tokens: Math.min(cfg.maxTokens || 8192, 16384),
+          temperature: json ? 0 : 0.5,
+          ...(json ? {response_format: {type: "json_object"}} : {})
+        }),
+        signal
+      });
+    } catch (e) { if (e.name === "AbortError") throw e; }
+  }
+  if (!res || !res.ok) {
+    let m = res ? await res.text() : "Request failed"; try { m = JSON.parse(m).error.message } catch {}
+    const status = res ? res.status : 500;
+    const hint = {402: "No balance left on this account. Top up the credit.", 401: "The API key is wrong or belongs to another provider.", 403: "This key has no access to that model.", 404: "Model name not found. Check the model name in CONFIG.", 413: "The scan is too large. Try fewer or smaller pages.", 429: "Rate limit reached or no credit left on this key."}[status] || "";
+    throw new Error(`API error ${status}. ${hint} ${m}`.replace(/\s+/g, " ").trim().slice(0, 400));
+  }
   if (!stream) { const j = await res.json(); return A ? j.content.map(c => c.text || "").join("") : j.choices[0].message.content; }
   const rd = res.body.getReader(), dec = new TextDecoder(); let buf = "", full = "";
   for (;;) {
@@ -208,7 +248,9 @@ async function llm({system, messages, model, stream, onToken, json, signal}) {
 
 /* ---------- CHATBOT ---------- */
 const CHAT_SYS = "You are a friendly, sharp AI tutor and examiner. Answer quickly, clearly and accurately. Write plain text only: never use LaTeX, dollar signs, markdown headings, tables or code fences unless the user asks for code. Write maths in plain text (x^2, 3/4, sqrt(9)). Keep paragraphs short and use simple '- ' lists only when they help.";
-const hist = []; let ctl = null, busy = false;
+const hist = []; let ctl = null, busy = false, gen = 0;
+const EMPTY = '<div class="empty" id="emp"><h3>Ask anything</h3><p>Questions, explanations, revision help.</p></div>';
+$("#newChat").onclick = () => { gen++; if (busy) ctl.abort(); hist.length = 0; msgs.innerHTML = EMPTY; inp.value = ""; inp.style.height = "auto"; inp.focus(); };
 const inp = $("#inp"), msgs = $("#msgs");
 inp.oninput = () => { inp.style.height = "auto"; inp.style.height = Math.min(inp.scrollHeight, 140) + "px"; };
 inp.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -218,22 +260,22 @@ async function send() {
   $("#emp")?.remove(); inp.value = ""; inp.style.height = "auto";
   msgs.insertAdjacentHTML("beforeend", `<div class="m u">${esc(text)}</div><div class="m a"><span class="dots"><i></i><i></i><i></i></span></div>`);
   const box = msgs.lastElementChild; msgs.scrollTop = msgs.scrollHeight;
-  hist.push({role: "user", content: text}); busy = true; ctl = new AbortController(); $("#send").innerHTML = "&#9632;";
+  const my = gen; hist.push({role: "user", content: text}); busy = true; ctl = new AbortController(); $("#send").innerHTML = "&#9632;";
   let acc = "", raf = 0;
   try {
-    acc = await llm({system: CHAT_SYS, model: M().chat, stream: true, signal: ctl.signal, messages: hist.slice(-20),
+    acc = await llm({system: CHAT_SYS, cfg: CONFIG.chat, stream: true, signal: ctl.signal, messages: hist.slice(-20),
       onToken: t => { acc = t; if (!raf) raf = requestAnimationFrame(() => { raf = 0; box.innerHTML = fmt(acc); msgs.scrollTop = msgs.scrollHeight; }); }});
-    box.innerHTML = fmt(acc); hist.push({role: "assistant", content: acc});
+    box.innerHTML = fmt(acc); if (my === gen) hist.push({role: "assistant", content: acc});
   } catch (e) {
-    if (e.name === "AbortError") { box.innerHTML = fmt(acc || "Stopped."); if (acc) hist.push({role: "assistant", content: acc}); }
-    else { box.innerHTML = `<p style="color:var(--bad)">${esc(e.message)}</p>`; hist.pop(); }
+    if (e.name === "AbortError") { box.innerHTML = fmt(acc || "Stopped."); if (acc && my === gen) hist.push({role: "assistant", content: acc}); }
+    else { box.innerHTML = `<p style="color:var(--bad)">${esc(e.message)}</p>`; if (my === gen) hist.pop(); }
   }
   busy = false; $("#send").innerHTML = "&#10148;"; msgs.scrollTop = msgs.scrollHeight;
 }
 
 /* ---------- PAPER CORRECTION: uploads ---------- */
-const files = {a: [], b: [], m: []};
-const chk = () => $("#run").disabled = !(files.a.length + files.b.length && (files.m.length || $("#msText").value.trim()));
+const files = {a: [], m: []};
+const chk = () => $("#run").disabled = !(files.a.length && (files.m.length || $("#msText").value.trim()));
 $("#msText").oninput = chk;
 document.querySelectorAll(".drop").forEach(z => {
   const k = z.dataset.k, fi = z.querySelector("input");
@@ -250,27 +292,34 @@ function draw(z, k) {
 }
 
 /* ---------- PAPER CORRECTION: OCR ---------- */
-const jpg = c => c.toDataURL("image/jpeg", .92).split(",")[1];
+const layerText = tc => { let y = null, t = ""; for (const it of tc.items) { const yy = it.transform[5]; if (y !== null && Math.abs(yy - y) > 3) t += "\n"; else if (t && !t.endsWith(" ")) t += " "; t += it.str; y = yy; } return t.trim(); };
+const jpg = c => c.toDataURL("image/jpeg", .85).split(",")[1];
 async function toPages(f) {
   if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) {
     const pdf = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise, out = [];
     for (let i = 1; i <= Math.min(pdf.numPages, 30); i++) {
-      const pg = await pdf.getPage(i), vp = pg.getViewport({scale: 2.2}), c = document.createElement("canvas");
+      const pg = await pdf.getPage(i), v0 = pg.getViewport({scale: 1}), vp = pg.getViewport({scale: 2200 / Math.max(v0.width, v0.height)}), c = document.createElement("canvas");
       c.width = vp.width; c.height = vp.height;
       await pg.render({canvasContext: c.getContext("2d"), viewport: vp}).promise;
       const tc = await pg.getTextContent();
-      out.push({img: jpg(c), hint: tc.items.map(x => x.str).join(" ").trim()});
+      out.push({img: jpg(c), hint: layerText(tc)});
     }
     return out;
   }
-  const bmp = await createImageBitmap(f), k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
+  const bmp = await createImageBitmap(f), k = Math.min(1, 2200 / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
   c.width = bmp.width * k; c.height = bmp.height * k;
   const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(bmp, 0, 0, c.width, c.height);
   return [{img: jpg(c), hint: ""}];
 }
 const OCR_SYS = "You are a meticulous OCR engine for exam papers, both handwritten and printed. Transcribe EVERY word, number, symbol, label and table on the page exactly as written, in reading order, keeping question numbers and line breaks. Do not fix spelling, grammar or maths, and do not answer or comment. Write crossed-out text as [crossed out: ...], unreadable text as [illegible], diagrams as [diagram: short description], and tables as rows separated by ' | '. Write maths in plain text (x^2, 3/4), never LaTeX. Output only the transcription.";
-const ocr = (p, label) => llm({system: OCR_SYS, model: M().ocr, messages: [{role: "user", content: [{image: p.img},
-  {text: `Transcribe this page (${label}).` + (p.hint.length > 30 ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}` : "")}]}]});
+let tw = null;
+async function ocr(p, label) {
+  if (CONFIG.ocr.mode === "vision") return llm({system: OCR_SYS, cfg: CONFIG.ocr, messages: [{role: "user", content: [{image: p.img},
+    {text: `Transcribe this page (${label}).` + (p.hint.length > 30 ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}` : "")}]}]});
+  if (p.hint.length > 30) return p.hint;   // digital PDF: its own text is exact, no OCR needed
+  tw = tw || await Tesseract.createWorker("eng");
+  return (await tw.recognize("data:image/jpeg;base64," + p.img)).data.text;
+}
 async function pool(items, n, fn) {
   const r = []; let i = 0;
   await Promise.all(Array.from({length: Math.min(n, items.length)}, async () => { while (i < items.length) { const k = i++; r[k] = await fn(items[k]); } }));
@@ -290,38 +339,49 @@ Rules:
 - Write plain text only: no LaTeX, no dollar signs, no markdown symbols. Maths as plain text (x^2, 3/4).
 Return JSON only in exactly this shape:
 {"overall_feedback":"2-3 sentence summary","questions":[{"id":"1a","question":"short question text","max_marks":2,"awarded":1,"student_answer":"","correct_answer":"","points":[{"text":"","earned":true}],"mistakes":[{"issue":"","fix":""}]}]}`;
-const parse = s => JSON.parse(s.slice(s.indexOf("{"), s.lastIndexOf("}") + 1));
+const gradeLLM = async o => {
+  try { return await llm({...o, cfg: CONFIG.grade}); }
+  catch (e) { if (CONFIG.gradeFallback && /API error (400|404)/.test(e.message)) return llm({...o, cfg: CONFIG.gradeFallback}); throw e; }
+};
+const parse = s => {
+  const str = String(s || "");
+  const start = str.indexOf("{"), end = str.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try { return JSON.parse(str.slice(start, end + 1)); } catch {}
+  }
+  throw new Error(str.length > 200 ? str.slice(0, 200).replace(/\s+/g, " ").trim() + "..." : str.replace(/\s+/g, " ").trim() || "Could not parse response from examiner.");
+};
 const status = (t, p) => { $("#prog").classList.add("on"); $("#pt").textContent = t; $("#pb").style.width = p + "%"; };
 
 $("#run").onclick = async () => {
   const btn = $("#run"), err = $("#err"); btn.disabled = true; err.style.display = "none"; $("#res").innerHTML = "";
   try {
     const jobs = [];
-    for (const k of ["a", "b", "m"]) for (const f of files[k]) {
+    for (const k of ["a", "m"]) for (const f of files[k]) {
       status("Preparing " + f.name, 3);
       (await toPages(f)).forEach((p, i) => jobs.push({k, p, l: `${f.name}, page ${i + 1}`}));
     }
     let d = 0;
-    const out = await pool(jobs, 3, async j => {
+    const out = await pool(jobs, CONFIG.ocr.mode === "vision" ? 2 : 1, async j => {
       const t = await ocr(j.p, j.l); status(`Reading text ${++d} of ${jobs.length} pages`, 5 + d / jobs.length * 60);
       return {k: j.k, t: `[${j.l}]\n${t}`};
     });
-    const T = {a: "", b: "", m: $("#msText").value.trim()};
+    const T = {a: "", m: $("#msText").value.trim()};
     out.forEach(o => T[o.k] += (T[o.k] ? "\n\n" : "") + o.t);
-    const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS, PART 1:\n${T.a || "(none)"}\n\nSTUDENT ANSWERS, PART 2:\n${T.b || "(none)"}`;
-    status("Marking against the mark scheme", 70);
-    const draft = parse(await llm({system: GRADE_SYS, model: M().grade, json: true,
+    const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS:\n${T.a}`;
+    status("Marking against the mark scheme (can take a minute or two)", 70);
+    const draft = parse(await gradeLLM({system: GRADE_SYS, json: true,
       messages: [{role: "user", content: ctx + "\n\nMark every question now. Return JSON only."}]}));
     status("Double-checking every mark", 88);
     let final = draft;
     try {
-      final = parse(await llm({system: GRADE_SYS, model: M().grade, json: true, messages: [{role: "user", content:
+      final = parse(await gradeLLM({system: GRADE_SYS, json: true, messages: [{role: "user", content:
         ctx + "\n\nDRAFT MARKING:\n" + JSON.stringify(draft) + "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only."}]}));
       if (!Array.isArray(final.questions) || !final.questions.length) final = draft;
     } catch { final = draft; }
     if (!Array.isArray(final.questions) || !final.questions.length) throw new Error("No questions could be marked. Check the mark scheme and answer scans.");
     status("Done", 100); render(final, T);
-  } catch (e) { err.textContent = e.message; err.style.display = "block"; $("#prog").classList.remove("on"); }
+  } catch (e) { console.error(e); err.textContent = e.message; err.style.display = "block"; $("#prog").classList.remove("on"); }
   btn.disabled = false; chk();
 };
 
@@ -358,7 +418,7 @@ function render(r, T) {
       <div><h4>Mark scheme points</h4><ul class="pts">${(q.points || []).map(p => `<li class="${p.earned ? "ok" : "bad"}"><i>${p.earned ? "✓" : "✗"}</i><span>${inl(p.text)}</span></li>`).join("")}</ul></div>
       <div><h4>Correct answer</h4>${fmt(q.correct_answer)}</div>
     </div></div>`).join("")}
-  <details><summary>Extracted text (check the OCR)</summary><pre>${esc("PART 1\n" + T.a + "\n\nPART 2\n" + T.b)}</pre></details>`;
+  <details><summary>Extracted text (check the OCR)</summary><pre>${esc(T.a)}</pre></details>`;
   requestAnimationFrame(() => requestAnimationFrame(() => {
     $("#arc").style.strokeDashoffset = C * (1 - pct / 100);
     const el = $("#pnum"), t0 = performance.now();

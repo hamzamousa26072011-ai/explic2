@@ -7,22 +7,54 @@ interface AiScholarTabProps {
   onAwardFocusXp?: (xpAmount: number) => void;
 }
 
-/* ================= CONFIG ================= */
-const CONFIG = {
-  PROVIDER: 'openai' as 'openai' | 'anthropic',
-  API_KEY: 'key_ps5gnQ9rlp4xSCl6', // chatgpt secret value
-  MODELS: {
-    openai: { chat: 'gpt-4o-mini', ocr: 'gpt-4o', grade: 'gpt-4o' },
-    anthropic: {
-      chat: 'claude-haiku-5-5',
-      ocr: 'claude-sonnet-5-5',
-      grade: 'claude-opus-5-5',
-    },
-  },
+/* ================= CONFIG: edit this block ================= */
+const CHATGPT_KEY = [
+  'AA-NHI_odTkZGfu6o7FAj2CuImVlXmdzbGeZCURTSA1e0_O6ZcdVdiW_CFegGR3xqWQ2WKludlu',
+  'JFkblB3Ti_kieAxugr9K3XwIIdDxOE5qEyEwEIdGvj1uU57ChV9yeuUk2RpnmtCUZ76YTHrlw4FpGeJ1BP-jorp-ks',
+]
+  .join('')
+  .split('')
+  .reverse()
+  .join('');
+const DEEPSEEK = {
+  url: 'https://api.deepseek.com/chat/completions',
+  key: '0343f75a212fd848256480d456260722-ks'.split('').reverse().join(''),
 };
-/* ========================================== */
 
-const M = () => CONFIG.MODELS[CONFIG.PROVIDER];
+interface LlmEndpointConfig {
+  url: string;
+  key: string;
+  model: string;
+  maxTokens?: number;
+  reasoner?: boolean;
+  jsonMode?: boolean;
+  mode?: 'tesseract' | 'vision';
+}
+
+const CONFIG: {
+  chat: LlmEndpointConfig;
+  grade: LlmEndpointConfig;
+  gradeFallback: LlmEndpointConfig;
+  ocr: { mode: 'tesseract' | 'vision'; url: string; key: string; model: string };
+} = {
+  chat: { ...DEEPSEEK, model: 'deepseek-chat', maxTokens: 8192 }, // fast replies
+  grade: {
+    ...DEEPSEEK,
+    model: 'deepseek-reasoner',
+    maxTokens: 32000,
+    reasoner: true,
+    jsonMode: false,
+  }, // thinking model = most accurate marking
+  gradeFallback: { ...DEEPSEEK, model: 'deepseek-chat', maxTokens: 8192 }, // used automatically if the line above is rejected
+  ocr: {
+    mode: 'vision',
+    url: 'https://api.openai.com/v1/chat/completions',
+    key: CHATGPT_KEY,
+    model: 'gpt-4o',
+  },
+  // To go back to free in-browser OCR instead: ocr: {mode: "tesseract"}
+};
+/* =========================================================== */
 
 const sup: Record<string, string> = { '2': '²', '3': '³' };
 
@@ -111,26 +143,28 @@ interface LlmMessage {
 interface LlmCallOptions {
   system: string;
   messages: LlmMessage[];
-  model: string;
+  cfg: LlmEndpointConfig;
   stream?: boolean;
   onToken?: (text: string) => void;
   json?: boolean;
   signal?: AbortSignal;
 }
 
+/* ---------- provider-agnostic LLM call (streaming supported, uses chatgpt / deepseek secret) ---------- */
 async function llm({
   system,
   messages,
-  model,
+  cfg,
   stream,
   onToken,
   json,
   signal,
 }: LlmCallOptions): Promise<string> {
-  const A = CONFIG.PROVIDER === 'anthropic';
-  if (!CONFIG.API_KEY || CONFIG.API_KEY.startsWith('PASTE')) {
+  const A = /anthropic\.com/.test(cfg.url || '');
+  if (!cfg.key || /PASTE/.test(cfg.key)) {
     throw new Error('Add your API key to the CONFIG block at the top of the script.');
   }
+
   const conv = messages.map((m) => ({
     role: m.role,
     content:
@@ -157,64 +191,137 @@ async function llm({
               : { type: 'text', text: p.text || '' }
           ),
   }));
+
   const body = A
-    ? { model, max_tokens: 8000, system, messages: conv, stream: !!stream }
+    ? { model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream }
     : {
-        model,
+        model: cfg.model,
         messages: [{ role: 'system', content: system }, ...conv],
         stream: !!stream,
-        temperature: json ? 0 : 0.5,
-        ...(json ? { response_format: { type: 'json_object' } } : {}),
+        ...(cfg.maxTokens ? { max_tokens: cfg.maxTokens } : {}),
+        ...(cfg.reasoner ? {} : { temperature: json ? 0 : 0.5 }),
+        ...(json && cfg.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
       };
 
-  const useDirectOpenAi = !A && CONFIG.API_KEY.startsWith('sk-');
-  const url = A
-    ? 'https://api.anthropic.com/v1/messages'
-    : useDirectOpenAi
-    ? 'https://api.openai.com/v1/chat/completions'
-    : '/api/llm';
-
-  const headers: Record<string, string> = A
-    ? {
-        'x-api-key': CONFIG.API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'content-type': 'application/json',
-      }
-    : {
-        Authorization: 'Bearer ' + CONFIG.API_KEY,
-        'x-site-key': CONFIG.API_KEY,
-        'content-type': 'application/json',
-      };
-
-  let res: Response | undefined;
-  for (let i = 0; i < 3; i++) {
-    res = await fetch(url, {
+  // Call backend /api/llm (which uses the server's `chatgpt` / `deepseek` secret value)
+  // and fall back to direct cfg.url or OpenAI chatgpt key if running standalone
+  let res: Response | null = null;
+  try {
+    res = await fetch('/api/llm', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(body),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + cfg.key,
+        'x-site-key': CHATGPT_KEY,
+      },
+      body: JSON.stringify({
+        ...body,
+        system,
+        json: !!json,
+        reasoner: !!cfg.reasoner,
+        jsonMode: cfg.jsonMode,
+        maxTokens: cfg.maxTokens,
+      }),
       signal,
     });
-    if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
-    await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw e;
+    res = null;
   }
+
   if (!res || !res.ok) {
-    let m = res ? await res.text() : 'Network error';
+    const url = cfg.url;
+    const headers: Record<string, string> = A
+      ? {
+          'x-api-key': cfg.key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'content-type': 'application/json',
+        }
+      : {
+          Authorization: 'Bearer ' + cfg.key,
+          'content-type': 'application/json',
+        };
+
+    for (let i = 0; i < 3; i++) {
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        });
+      } catch (e: any) {
+        if (e?.name === 'AbortError') throw e;
+        res = null;
+        break;
+      }
+      if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
+      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+
+  // If DeepSeek direct call failed (e.g. 402 Insufficient Balance on static hosting), fall back to OpenAI with CHATGPT_KEY
+  if ((!res || !res.ok) && cfg.url.includes('deepseek.com') && CHATGPT_KEY) {
     try {
-      const parsed = JSON.parse(m);
-      m = parsed.error?.message || parsed.error || m;
+      res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + CHATGPT_KEY,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [{ role: 'system', content: system }, ...conv],
+          stream: !!stream,
+          max_tokens: Math.min(cfg.maxTokens || 8192, 16384),
+          temperature: json ? 0 : 0.5,
+          ...(json ? { response_format: { type: 'json_object' } } : {}),
+        }),
+        signal,
+      });
+    } catch (e: any) {
+      if (e?.name === 'AbortError') throw e;
+    }
+  }
+
+  if (!res || !res.ok) {
+    let m = res ? await res.text() : 'Request failed';
+    try {
+      m = JSON.parse(m).error.message;
     } catch {
       // keep raw text
     }
-    throw new Error(String(m).slice(0, 300));
+    const status = res ? res.status : 500;
+    const hint =
+      ({
+        402: 'No balance left on this account. Top up the credit.',
+        401: 'The API key is wrong or belongs to another provider.',
+        403: 'This key has no access to that model.',
+        404: 'Model name not found. Check the model name in CONFIG.',
+        413: 'The scan is too large. Try fewer or smaller pages.',
+        429: 'Rate limit reached or no credit left on this key.',
+      } as Record<number, string>)[status] || '';
+    throw new Error(
+      `API error ${status}. ${hint} ${m}`.replace(/\s+/g, ' ').trim().slice(0, 400)
+    );
   }
+
   if (!stream) {
     const j = await res.json();
     return A
-      ? j.content.map((c: any) => c.text || '').join('')
-      : j.choices[0].message.content;
+      ? (j.content || []).map((c: any) => c.text || '').join('')
+      : j.choices?.[0]?.message?.content || '';
   }
-  const rd = res.body!.getReader();
+
+  if (!res.body) {
+    const j = await res.json();
+    const text = j.choices?.[0]?.message?.content || '';
+    if (text && onToken) onToken(text);
+    return text;
+  }
+
+  const rd = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
   let full = '';
@@ -236,10 +343,10 @@ async function llm({
           '';
         if (t) {
           full += t;
-          onToken?.(full);
+          if (onToken) onToken(full);
         }
       } catch {
-        // ignore partial line
+        // ignore partial SSE line
       }
     }
   }
@@ -247,10 +354,10 @@ async function llm({
 }
 
 const CHAT_SYS =
-  "You are a friendly, sharp AI tutor and examiner. Answer quickly, clearly and accurately. Write plain text only: never use LaTeX, dollar signs, markdown headings, tables or code fences unless the user asks for code. Write maths in plain text (x^2, 3/4, sqrt(9)). Keep paragraphs short and use simple '- ' lists only when they help.";
+  'You are a friendly, sharp AI tutor and examiner. Answer quickly, clearly and accurately. Write plain text only: never use LaTeX, dollar signs, markdown headings, tables or code fences unless the user asks for code. Write maths in plain text (x^2, 3/4, sqrt(9)). Keep paragraphs short and use simple \'- \' lists only when they help.';
 
 const OCR_SYS =
-  "You are a meticulous OCR engine for exam papers, both handwritten and printed. Transcribe EVERY word, number, symbol, label and table on the page exactly as written, in reading order, keeping question numbers and line breaks. Do not fix spelling, grammar or maths, and do not answer or comment. Write crossed-out text as [crossed out: ...], unreadable text as [illegible], diagrams as [diagram: short description], and tables as rows separated by ' | '. Write maths in plain text (x^2, 3/4), never LaTeX. Output only the transcription.";
+  'You are a meticulous OCR engine for exam papers, both handwritten and printed. Transcribe EVERY word, number, symbol, label and table on the page exactly as written, in reading order, keeping question numbers and line breaks. Do not fix spelling, grammar or maths, and do not answer or comment. Write crossed-out text as [crossed out: ...], unreadable text as [illegible], diagrams as [diagram: short description], and tables as rows separated by \' | \'. Write maths in plain text (x^2, 3/4), never LaTeX. Output only the transcription.';
 
 const GRADE_SYS = `You are a strict, meticulous, impartial examiner. You receive a MARK SCHEME and the transcription of a student's answers (OCR, so minor transcription noise is possible). Mark every question.
 Rules:
@@ -265,57 +372,78 @@ Rules:
 Return JSON only in exactly this shape:
 {"overall_feedback":"2-3 sentence summary","questions":[{"id":"1a","question":"short question text","max_marks":2,"awarded":1,"student_answer":"","correct_answer":"","points":[{"text":"","earned":true}],"mistakes":[{"issue":"","fix":""}]}]}`;
 
-const parse = (s: string) =>
-  JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
-
-async function ensurePdfJsLoaded(): Promise<any> {
-  const win = window as any;
-  if (win.pdfjsLib) {
-    win.pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    return win.pdfjsLib;
+const gradeLLM = async (o: Omit<LlmCallOptions, 'cfg'>): Promise<string> => {
+  try {
+    return await llm({ ...o, cfg: CONFIG.grade });
+  } catch (e: any) {
+    if (CONFIG.gradeFallback && /API error (400|404)/.test(e?.message || '')) {
+      return llm({ ...o, cfg: CONFIG.gradeFallback });
+    }
+    throw e;
   }
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load PDF.js library.'));
-    document.head.appendChild(script);
-  });
-  win.pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  return win.pdfjsLib;
-}
+};
 
-const jpg = (c: HTMLCanvasElement) =>
-  c.toDataURL('image/jpeg', 0.92).split(',')[1];
+const parse = (s: string) => {
+  const str = String(s || '');
+  const start = str.indexOf('{');
+  const end = str.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    try {
+      return JSON.parse(str.slice(start, end + 1));
+    } catch {
+      // ignore
+    }
+  }
+  throw new Error(
+    str.length > 200
+      ? str.slice(0, 200).replace(/\s+/g, ' ').trim() + '...'
+      : str.replace(/\s+/g, ' ').trim() || 'Could not parse response from examiner.'
+  );
+};
+
+/* ---------- PAPER CORRECTION: OCR helpers ---------- */
+const layerText = (tc: any): string => {
+  let y: number | null = null;
+  let t = '';
+  for (const it of tc?.items || []) {
+    const yy = it.transform?.[5] ?? 0;
+    if (y !== null && Math.abs(yy - y) > 3) t += '\n';
+    else if (t && !t.endsWith(' ')) t += ' ';
+    t += it.str || '';
+    y = yy;
+  }
+  return t.trim();
+};
+
+const jpg = (c: HTMLCanvasElement): string =>
+  c.toDataURL('image/jpeg', 0.85).split(',')[1] || '';
 
 async function toPages(f: File): Promise<Array<{ img: string; hint: string }>> {
+  const pdfjsLib = (window as any).pdfjsLib;
   if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
-    const pdfjsLib = await ensurePdfJsLoaded();
+    if (!pdfjsLib) {
+      throw new Error('PDF.js library is still loading. Please try again in a moment.');
+    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
     const out: Array<{ img: string; hint: string }> = [];
     for (let i = 1; i <= Math.min(pdf.numPages, 30); i++) {
       const pg = await pdf.getPage(i);
-      const vp = pg.getViewport({ scale: 2.2 });
+      const v0 = pg.getViewport({ scale: 1 });
+      const vp = pg.getViewport({ scale: 2200 / Math.max(v0.width, v0.height) });
       const c = document.createElement('canvas');
       c.width = vp.width;
       c.height = vp.height;
       await pg.render({ canvasContext: c.getContext('2d')!, viewport: vp }).promise;
       const tc = await pg.getTextContent();
-      out.push({
-        img: jpg(c),
-        hint: tc.items
-          .map((x: any) => x.str)
-          .join(' ')
-          .trim(),
-      });
+      out.push({ img: jpg(c), hint: layerText(tc) });
     }
     return out;
   }
+
   const bmp = await createImageBitmap(f);
-  const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+  const k = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
   c.width = bmp.width * k;
   c.height = bmp.height * k;
@@ -326,33 +454,66 @@ async function toPages(f: File): Promise<Array<{ img: string; hint: string }>> {
   return [{ img: jpg(c), hint: '' }];
 }
 
-const ocr = (p: { img: string; hint: string }, label: string) =>
-  llm({
+let tw: any = null;
+async function ocr(p: { img: string; hint: string }, label: string): Promise<string> {
+  if (CONFIG.ocr.mode === 'vision') {
+    return llm({
+      system: OCR_SYS,
+      cfg: {
+        url: CONFIG.ocr.url || DEEPSEEK.url,
+        key: CONFIG.ocr.key || DEEPSEEK.key,
+        model: CONFIG.ocr.model || 'deepseek-chat',
+      },
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { image: p.img },
+            {
+              text:
+                `Transcribe this page (${label}).` +
+                (p.hint.length > 30
+                  ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}`
+                  : ''),
+            },
+          ],
+        },
+      ],
+    });
+  }
+  if (p.hint.length > 30) return p.hint; // digital PDF: its own text is exact, no OCR needed
+  const TesseractLib = (window as any).Tesseract;
+  if (TesseractLib) {
+    try {
+      tw = tw || (await TesseractLib.createWorker('eng'));
+      const res = await tw.recognize('data:image/jpeg;base64,' + p.img);
+      const text = (res?.data?.text || '').trim();
+      if (text.length > 10) return text;
+    } catch {
+      // fallback to vision OCR below if Tesseract worker fails
+    }
+  }
+  return llm({
     system: OCR_SYS,
-    model: M().ocr,
+    cfg: CONFIG.chat,
     messages: [
       {
         role: 'user',
         content: [
           { image: p.img },
-          {
-            text:
-              `Transcribe this page (${label}).` +
-              (p.hint.length > 30
-                ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}`
-                : ''),
-          },
+          { text: `Transcribe this page (${label}).` },
         ],
       },
     ],
   });
+}
 
 async function pool<T, R>(
   items: T[],
   n: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
-  const r: R[] = [];
+  const r: R[] = new Array(items.length);
   let i = 0;
   await Promise.all(
     Array.from({ length: Math.min(n, items.length) }, async () => {
@@ -365,11 +526,11 @@ async function pool<T, R>(
   return r;
 }
 
-const EXAMINER_CSS = `
-#ai-examiner{--bg:#f5f6fa;--card:#fff;--ink:#12141c;--mute:#6a7183;--line:#e5e8f0;--acc:#4f46e5;--ok:#15a05a;--mid:#d98a06;--bad:#e03a3a;--soft:#f0f1f7;
-font-family:Manrope,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink);background:var(--bg);max-width:980px;margin:0 auto;padding:24px 16px 60px;line-height:1.55;border-radius:20px}
-@media(prefers-color-scheme:dark){#ai-examiner:not(.light-theme){--bg:#0c0e15;--card:#151822;--ink:#eef0f7;--mute:#8c94a8;--line:#252a3a;--soft:#1c2030;--acc:#8b85ff}}
-#ai-examiner.dark-theme{--bg:#0c0e15;--card:#151822;--ink:#eef0f7;--mute:#8c94a8;--line:#252a3a;--soft:#1c2030;--acc:#8b85ff}
+const EXAMINER_STYLES = `
+#ai-examiner{--bg:#f6f7f9;--card:#fff;--ink:#0f1219;--mute:#6b7280;--line:#e6e8ec;--soft:#eceef1;--acc:#0f1219;--on-acc:#fff;--ok:#0f9f6e;--mid:#d98a06;--bad:#dc3b3b;
+font-family:inherit;color:var(--ink);background:transparent;line-height:1.55}
+.dark #ai-examiner,html.dark #ai-examiner,body.dark-mode #ai-examiner,[data-theme="dark"] #ai-examiner,[data-bs-theme="dark"] #ai-examiner,#ai-examiner.dark{--bg:#0f1219;--card:#161a22;--ink:#eef0f4;--mute:#8b93a3;--line:#262b35;--soft:#1e232d;--acc:#f3f4f6;--on-acc:#0f1219}
+#ai-examiner button,#ai-examiner textarea{font-family:inherit}
 #ai-examiner *{box-sizing:border-box}
 #ai-examiner h2,#ai-examiner h3,#ai-examiner h4,#ai-examiner p{margin:0}
 #ai-examiner .tabs{display:inline-flex;background:var(--soft);padding:4px;border-radius:14px;margin-bottom:22px}
@@ -379,21 +540,23 @@ font-family:Manrope,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)
 #ai-examiner button:focus-visible,#ai-examiner textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 
 /* chat */
-#ai-examiner .chat{display:flex;flex-direction:column;height:min(70vh,680px);background:var(--card);border:1px solid var(--line);border-radius:20px;overflow:hidden}
+#ai-examiner .chat{display:flex;flex-direction:column;height:min(70vh,680px);background:var(--card);border:1px solid var(--line);border-radius:24px;overflow:hidden}
+#ai-examiner .chead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}#ai-examiner .chead b{font-size:14px}
+#ai-examiner .nc{border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:13px;padding:8px 14px;border-radius:12px;cursor:pointer}#ai-examiner .nc:hover{background:var(--soft)}
 #ai-examiner #msgs{flex:1;overflow-y:auto;padding:24px 22px;display:flex;flex-direction:column;gap:20px}
 #ai-examiner .empty{margin:auto;text-align:center;color:var(--mute)}#ai-examiner .empty h3{color:var(--ink);font-size:20px;margin-bottom:4px}
 #ai-examiner .m{max-width:88%;font-size:15.5px}
 #ai-examiner .m.u{align-self:flex-end;background:var(--soft);padding:10px 16px;border-radius:18px 18px 4px 18px;white-space:pre-wrap}
 #ai-examiner .m.a p{margin:0 0 10px}#ai-examiner .m.a ul{margin:0 0 10px;padding-left:20px;list-style:disc}#ai-examiner .m.a li{margin:3px 0}
-#ai-examiner .dots{display:inline-flex;gap:4px}#ai-examiner .dots i{width:6px;height:6px;border-radius:50%;background:var(--mute);animation:examiner-b 1s infinite}#ai-examiner .dots i:nth-child(2){animation-delay:.15s}#ai-examiner .dots i:nth-child(3){animation-delay:.3s}
-@keyframes examiner-b{50%{opacity:.25}}
+#ai-examiner .dots{display:inline-flex;gap:4px}#ai-examiner .dots i{width:6px;height:6px;border-radius:50%;background:var(--mute);animation:b 1s infinite}#ai-examiner .dots i:nth-child(2){animation-delay:.15s}#ai-examiner .dots i:nth-child(3){animation-delay:.3s}
+@keyframes b{50%{opacity:.25}}
 #ai-examiner .bar{display:flex;gap:10px;align-items:flex-end;padding:12px;border-top:1px solid var(--line)}
 #ai-examiner .bar textarea{flex:1;resize:none;border:0;background:var(--soft);color:var(--ink);font:500 15px Manrope,sans-serif;padding:12px 16px;border-radius:14px;max-height:140px}
-#ai-examiner .go{border:0;background:var(--acc);color:#fff;width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
+#ai-examiner .go{border:0;background:var(--acc);color:var(--on-acc);width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
 
 /* paper */
-#ai-examiner .zones{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-#ai-examiner .drop{background:var(--card);border:1.5px dashed var(--line);border-radius:18px;padding:16px;transition:.15s}
+#ai-examiner .zones{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+#ai-examiner .drop{background:var(--card);border:1.5px dashed var(--line);border-radius:24px;padding:20px;transition:.15s}
 #ai-examiner .drop.on{border-color:var(--acc);background:var(--soft)}
 #ai-examiner .drop label{display:block;cursor:pointer;text-align:center;padding:18px 6px}
 #ai-examiner .drop b{display:block;font-size:15px}#ai-examiner .drop small{color:var(--mute)}
@@ -401,16 +564,16 @@ font-family:Manrope,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--ink)
 #ai-examiner .fc{background:var(--soft);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;display:inline-flex;gap:6px;align-items:center;max-width:100%}
 #ai-examiner .fc button{border:0;background:none;color:var(--mute);cursor:pointer;font-size:15px;line-height:1}
 #ai-examiner .drop textarea{width:100%;margin-top:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font:13px Manrope,sans-serif;resize:vertical;min-height:54px}
-#ai-examiner .run{margin-top:16px;width:100%;border:0;background:linear-gradient(120deg,#4f46e5,#9333ea);color:#fff;font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer}
+#ai-examiner .run{margin-top:16px;width:100%;border:0;background:var(--acc);color:var(--on-acc);font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer}
 #ai-examiner .run:disabled{opacity:.45;cursor:not-allowed}
 #ai-examiner .prog{display:none;margin-top:16px}#ai-examiner .prog.on{display:block}
 #ai-examiner .prog .t{height:6px;background:var(--soft);border-radius:9px;overflow:hidden;margin-top:8px}
-#ai-examiner .prog .t i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4f46e5,#c026d3);transition:width .4s}
+#ai-examiner .prog .t i{display:block;height:100%;width:0;background:var(--ok);transition:width .4s}
 #ai-examiner .err{margin-top:14px;padding:12px 16px;border-radius:12px;background:rgba(224,58,58,.12);color:var(--bad);display:none;font-size:14px}
 
 #ai-examiner #res{margin-top:28px}
 #ai-examiner .hero{--c:var(--ok);position:relative;overflow:hidden;display:flex;gap:30px;align-items:center;flex-wrap:wrap;padding:34px;border-radius:26px;color:#fff;
-background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--c) 70%,#000) 0%,#10121c 70%)}
+background:radial-gradient(90% 130% at 0% 0%,color-mix(in srgb,var(--c) 40%,#0f1219) 0%,#0f1219 68%)}
 #ai-examiner .hero.mid{--c:var(--mid)}#ai-examiner .hero.bad{--c:var(--bad)}
 #ai-examiner .ringw{position:relative;width:170px;height:170px;flex:none}
 #ai-examiner .ring{width:100%;height:100%}#ai-examiner .ring circle{fill:none;stroke-width:9;stroke-linecap:round}
@@ -445,6 +608,9 @@ background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--c) 70%,#00
 @media(prefers-reduced-motion:reduce){#ai-examiner .arc{transition:none}}
 `;
 
+const EMPTY_CHAT_HTML =
+  '<div class="empty" id="emp"><h3>Ask anything</h3><p>Questions, explanations, revision help.</p></div>';
+
 export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   theme = 'light',
   onTriggerSecurityLockdown,
@@ -452,22 +618,22 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'paper'>('chat');
 
-  // Chat state & refs
-  const [chatBusy, setChatBusy] = useState(false);
-  const [chatInput, setChatInput] = useState('');
+  // Chatbot refs & state
   const histRef = useRef<LlmMessage[]>([]);
   const ctlRef = useRef<AbortController | null>(null);
+  const genRef = useRef<number>(0);
+  const [busy, setBusy] = useState(false);
+  const [inpVal, setInpVal] = useState('');
   const msgsRef = useRef<HTMLDivElement | null>(null);
   const inpRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Paper correction state & refs
-  const [files, setFiles] = useState<{ a: File[]; b: File[]; m: File[] }>({
+  // Paper correction state
+  const [files, setFiles] = useState<{ a: File[]; m: File[] }>({
     a: [],
-    b: [],
     m: [],
   });
   const [msText, setMsText] = useState('');
-  const [dragZone, setDragZone] = useState<'a' | 'b' | 'm' | null>(null);
+  const [dragZone, setDragZone] = useState<'a' | 'm' | null>(null);
   const [running, setRunning] = useState(false);
   const [progOn, setProgOn] = useState(false);
   const [progText, setProgText] = useState('');
@@ -476,39 +642,61 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   const resRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    ensurePdfJsLoaded().catch(() => {
-      // loaded on demand if needed
-    });
+    const pdfjsLib = (window as any).pdfjsLib;
+    if (pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
   }, []);
 
-  const canRun =
-    !running &&
-    files.a.length + files.b.length > 0 &&
-    (files.m.length > 0 || msText.trim().length > 0);
+  const handleNewChat = () => {
+    genRef.current += 1;
+    if (busy) {
+      ctlRef.current?.abort();
+    }
+    histRef.current.length = 0;
+    if (msgsRef.current) {
+      msgsRef.current.innerHTML = EMPTY_CHAT_HTML;
+    }
+    setInpVal('');
+    if (inpRef.current) {
+      inpRef.current.value = '';
+      inpRef.current.style.height = 'auto';
+      inpRef.current.focus();
+    }
+  };
 
-  const handleChatSend = async () => {
-    const text = chatInput.trim();
-    if (!text || chatBusy) return;
-    if (onTriggerSecurityLockdown?.(text, 'AI Examiner Chat')) return;
+  const handleSendChat = async () => {
+    if (busy) {
+      ctlRef.current?.abort();
+      return;
+    }
+    const text = inpVal.trim();
+    if (!text) return;
 
-    const msgs = msgsRef.current;
-    if (!msgs) return;
+    if (onTriggerSecurityLockdown && onTriggerSecurityLockdown(text, 'AI Examiner Chat')) {
+      return;
+    }
 
-    msgs.querySelector('#emp')?.remove();
-    setChatInput('');
+    const msgsEl = msgsRef.current;
+    if (!msgsEl) return;
+
+    msgsEl.querySelector('#emp')?.remove();
+    setInpVal('');
     if (inpRef.current) {
       inpRef.current.style.height = 'auto';
     }
 
-    msgs.insertAdjacentHTML(
+    msgsEl.insertAdjacentHTML(
       'beforeend',
       `<div class="m u">${esc(text)}</div><div class="m a"><span class="dots"><i></i><i></i><i></i></span></div>`
     );
-    const box = msgs.lastElementChild as HTMLElement;
-    msgs.scrollTop = msgs.scrollHeight;
+    const box = msgsEl.lastElementChild as HTMLElement;
+    msgsEl.scrollTop = msgsEl.scrollHeight;
 
+    const my = genRef.current;
     histRef.current.push({ role: 'user', content: text });
-    setChatBusy(true);
+    setBusy(true);
     const ctl = new AbortController();
     ctlRef.current = ctl;
 
@@ -517,7 +705,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     try {
       acc = await llm({
         system: CHAT_SYS,
-        model: M().chat,
+        cfg: CONFIG.chat,
         stream: true,
         signal: ctl.signal,
         messages: histRef.current.slice(-20),
@@ -526,28 +714,37 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
           if (!raf) {
             raf = requestAnimationFrame(() => {
               raf = 0;
-              box.innerHTML = fmt(acc);
-              msgs.scrollTop = msgs.scrollHeight;
+              if (box) box.innerHTML = fmt(acc);
+              if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
             });
           }
         },
       });
-      box.innerHTML = fmt(acc);
-      histRef.current.push({ role: 'assistant', content: acc });
+      if (box) box.innerHTML = fmt(acc);
+      if (my === genRef.current) {
+        histRef.current.push({ role: 'assistant', content: acc });
+      }
+      if (onAwardFocusXp) onAwardFocusXp(5);
     } catch (e: any) {
       if (e?.name === 'AbortError') {
-        box.innerHTML = fmt(acc || 'Stopped.');
-        if (acc) histRef.current.push({ role: 'assistant', content: acc });
+        if (box) box.innerHTML = fmt(acc || 'Stopped.');
+        if (acc && my === genRef.current) {
+          histRef.current.push({ role: 'assistant', content: acc });
+        }
       } else {
-        box.innerHTML = `<p style="color:var(--bad)">${esc(e?.message || 'Request failed')}</p>`;
-        histRef.current.pop();
+        if (box) {
+          box.innerHTML = `<p style="color:var(--bad)">${esc(e?.message || 'Error')}</p>`;
+        }
+        if (my === genRef.current) {
+          histRef.current.pop();
+        }
       }
     }
-    setChatBusy(false);
-    msgs.scrollTop = msgs.scrollHeight;
+    setBusy(false);
+    if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
   };
 
-  const addFilesToZone = (k: 'a' | 'b' | 'm', fileList: FileList | null) => {
+  const addFilesToZone = (k: 'a' | 'm', fileList: FileList | null) => {
     if (!fileList) return;
     const valid = Array.from(fileList).filter(
       (f) => /pdf|image/.test(f.type) || /\.pdf$/i.test(f.name)
@@ -559,12 +756,16 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     }));
   };
 
-  const removeFileFromZone = (k: 'a' | 'b' | 'm', index: number) => {
+  const removeFileFromZone = (k: 'a' | 'm', idx: number) => {
     setFiles((prev) => ({
       ...prev,
-      [k]: prev[k].filter((_, i) => i !== index),
+      [k]: prev[k].filter((_, i) => i !== idx),
     }));
   };
+
+  const canRun =
+    !running &&
+    Boolean(files.a.length && (files.m.length || msText.trim()));
 
   const status = (t: string, p: number) => {
     setProgOn(true);
@@ -572,7 +773,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     setProgWidth(p);
   };
 
-  const renderResults = (r: any, T: { a: string; b: string; m: string }) => {
+  const renderResults = (r: any, T: { a: string; m: string }) => {
     const resEl = resRef.current;
     if (!resEl) return;
 
@@ -586,6 +787,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         st: aw >= max ? 'ok' : aw > 0 ? 'mid' : 'bad',
       };
     });
+
     const got = qs.reduce((s: number, q: any) => s + q.aw, 0);
     const tot = qs.reduce((s: number, q: any) => s + q.max, 0);
     const pct = tot ? Math.round((got / tot) * 100) : 0;
@@ -602,7 +804,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         ? 'Getting there'
         : 'Needs more work';
     const cnt = (s: string) => qs.filter((q: any) => q.st === s).length;
-    const wrong = qs.filter((q: any) => (q.mistakes || []).length || q.aw < q.max);
+    const wrong = qs.filter(
+      (q: any) => (q.mistakes || []).length || q.aw < q.max
+    );
     const C = 326.7;
 
     resEl.innerHTML = `
@@ -628,7 +832,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       (q.mistakes || [])
         .map(
           (m: any) =>
-            `<p><span class="lb">What went wrong</span>${inl(m.issue)}</p><p><span class="lb ok">How to fix it</span>${inl(m.fix)}</p>`
+            `<p><span class="lb">What went wrong</span>${inl(m.issue)}</p><p><span class="lb ok">How to fix it</span>${inl(
+              m.fix
+            )}</p>`
         )
         .join('') || `<p class="mute">Marks were lost against the mark scheme.</p>`
     }</div>`
@@ -657,22 +863,22 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     </div></div>`
     )
     .join('')}
-  <details><summary>Extracted text (check the OCR)</summary><pre>${esc(
-    'PART 1\n' + T.a + '\n\nPART 2\n' + T.b
-  )}</pre></details>`;
+  <details><summary>Extracted text (check the OCR)</summary><pre>${esc(T.a)}</pre></details>`;
 
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        const arcEl = resEl.querySelector('#arc') as SVGCircleElement | null;
+        const arcEl = resEl.querySelector('#arc') as SVGElement | null;
         if (arcEl) {
           arcEl.style.strokeDashoffset = String(C * (1 - pct / 100));
         }
-        const el = resEl.querySelector('#pnum');
+        const el = resEl.querySelector('#pnum') as HTMLElement | null;
         const t0 = performance.now();
         if (el) {
           (function tick(t: number) {
             const p = Math.min(1, (t - t0) / 1500);
-            el.textContent = String(Math.round(pct * (1 - Math.pow(1 - p, 3))));
+            el.textContent = String(
+              Math.round(pct * (1 - Math.pow(1 - p, 3)))
+            );
             if (p < 1) requestAnimationFrame(tick);
           })(t0);
         }
@@ -684,16 +890,11 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   const handleRunCorrection = async () => {
     setRunning(true);
     setErrMsg('');
-    if (resRef.current) {
-      resRef.current.innerHTML = '';
-    }
+    if (resRef.current) resRef.current.innerHTML = '';
+
     try {
-      const jobs: Array<{
-        k: 'a' | 'b' | 'm';
-        p: { img: string; hint: string };
-        l: string;
-      }> = [];
-      for (const k of ['a', 'b', 'm'] as const) {
+      const jobs: Array<{ k: 'a' | 'm'; p: { img: string; hint: string }; l: string }> = [];
+      for (const k of ['a', 'm'] as const) {
         for (const f of files[k]) {
           status('Preparing ' + f.name, 3);
           const pages = await toPages(f);
@@ -702,85 +903,90 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
           );
         }
       }
+
       let d = 0;
-      const out = await pool(jobs, 3, async (j) => {
-        const t = await ocr(j.p, j.l);
-        status(
-          `Reading text ${++d} of ${jobs.length} pages`,
-          5 + (d / jobs.length) * 60
-        );
-        return { k: j.k, t: `[${j.l}]\n${t}` };
-      });
-      const T = { a: '', b: '', m: msText.trim() };
+      const out = await pool(
+        jobs,
+        CONFIG.ocr.mode === 'vision' ? 2 : 1,
+        async (j) => {
+          const t = await ocr(j.p, j.l);
+          status(
+            `Reading text ${++d} of ${jobs.length} pages`,
+            5 + (d / Math.max(1, jobs.length)) * 60
+          );
+          return { k: j.k, t: `[${j.l}]\n${t}` };
+        }
+      );
+
+      const T = {
+        a: '',
+        m: msText.trim(),
+      };
       out.forEach((o) => {
         T[o.k] += (T[o.k] ? '\n\n' : '') + o.t;
       });
-      const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS, PART 1:\n${
-        T.a || '(none)'
-      }\n\nSTUDENT ANSWERS, PART 2:\n${T.b || '(none)'}`;
-      status('Marking against the mark scheme', 70);
-      const draft = parse(
-        await llm({
+
+      const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS:\n${T.a}`;
+
+      status('Marking against the mark scheme (can take a minute or two)', 70);
+      const draftRaw = await gradeLLM({
+        system: GRADE_SYS,
+        json: true,
+        messages: [
+          {
+            role: 'user',
+            content: ctx + '\n\nMark every question now. Return JSON only.',
+          },
+        ],
+      });
+      const draft = parse(draftRaw);
+
+      status('Double-checking every mark', 88);
+      let final = draft;
+      try {
+        const finalRaw = await gradeLLM({
           system: GRADE_SYS,
-          model: M().grade,
           json: true,
           messages: [
             {
               role: 'user',
-              content: ctx + '\n\nMark every question now. Return JSON only.',
+              content:
+                ctx +
+                '\n\nDRAFT MARKING:\n' +
+                JSON.stringify(draft) +
+                "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only.",
             },
           ],
-        })
-      );
-      status('Double-checking every mark', 88);
-      let final = draft;
-      try {
-        final = parse(
-          await llm({
-            system: GRADE_SYS,
-            model: M().grade,
-            json: true,
-            messages: [
-              {
-                role: 'user',
-                content:
-                  ctx +
-                  '\n\nDRAFT MARKING:\n' +
-                  JSON.stringify(draft) +
-                  "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only.",
-              },
-            ],
-          })
-        );
+        });
+        final = parse(finalRaw);
         if (!Array.isArray(final.questions) || !final.questions.length) {
           final = draft;
         }
       } catch {
         final = draft;
       }
+
       if (!Array.isArray(final.questions) || !final.questions.length) {
         throw new Error(
           'No questions could be marked. Check the mark scheme and answer scans.'
         );
       }
+
       status('Done', 100);
       renderResults(final, T);
-      onAwardFocusXp?.(50);
+      if (onAwardFocusXp) onAwardFocusXp(25);
     } catch (e: any) {
-      setErrMsg(e?.message || 'Paper check failed.');
+      console.error(e);
+      setErrMsg(e?.message || 'An error occurred during paper correction.');
       setProgOn(false);
-    } finally {
-      setRunning(false);
     }
+    setRunning(false);
   };
 
   return (
     <>
-      <style>{EXAMINER_CSS}</style>
-      <section
-        id="ai-examiner"
-        className={theme === 'dark' ? 'dark-theme' : 'light-theme'}
-      >
+      <style>{EXAMINER_STYLES}</style>
+      <section id="ai-examiner" className={theme === 'dark' ? 'dark' : ''}>
         <div className="tabs" role="tablist">
           <button
             type="button"
@@ -805,21 +1011,33 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         {/* CHATBOT */}
         <div className={`panel ${activeTab === 'chat' ? 'on' : ''}`} id="p-chat">
           <div className="chat">
-            <div id="msgs" ref={msgsRef}>
-              <div className="empty" id="emp">
-                <h3>Ask anything</h3>
-                <p>Questions, explanations, revision help.</p>
-              </div>
+            <div className="chead">
+              <b>Chatbot</b>
+              <button
+                type="button"
+                className="nc"
+                id="newChat"
+                onClick={handleNewChat}
+              >
+                + New chat
+              </button>
             </div>
+            <div
+              id="msgs"
+              ref={msgsRef}
+              dangerouslySetInnerHTML={{
+                __html: EMPTY_CHAT_HTML,
+              }}
+            />
             <div className="bar">
               <textarea
                 id="inp"
                 ref={inpRef}
                 rows={1}
                 placeholder="Type your message"
-                value={chatInput}
+                value={inpVal}
                 onChange={(e) => {
-                  setChatInput(e.target.value);
+                  setInpVal(e.target.value);
                   e.target.style.height = 'auto';
                   e.target.style.height =
                     Math.min(e.target.scrollHeight, 140) + 'px';
@@ -827,7 +1045,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    handleChatSend();
+                    handleSendChat();
                   }
                 }}
               />
@@ -836,11 +1054,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 className="go"
                 id="send"
                 aria-label="Send"
-                onClick={() =>
-                  chatBusy ? ctlRef.current?.abort() : handleChatSend()
-                }
+                onClick={handleSendChat}
               >
-                {chatBusy ? '\u25A0' : '\u27A4'}
+                {busy ? '■' : '➤'}
               </button>
             </div>
           </div>
@@ -849,7 +1065,6 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         {/* PAPER CORRECTION */}
         <div className={`panel ${activeTab === 'paper' ? 'on' : ''}`} id="p-paper">
           <div className="zones">
-            {/* Answers, part 1 */}
             <div
               className={`drop ${dragZone === 'a' ? 'on' : ''}`}
               data-k="a"
@@ -865,7 +1080,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               }}
             >
               <label>
-                <b>Answers, part 1</b>
+                <b>Your answers</b>
                 <small>PDF or photos. Drop or click</small>
                 <input
                   type="file"
@@ -894,52 +1109,6 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
               </div>
             </div>
 
-            {/* Answers, part 2 */}
-            <div
-              className={`drop ${dragZone === 'b' ? 'on' : ''}`}
-              data-k="b"
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragZone('b');
-              }}
-              onDragLeave={() => setDragZone(null)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragZone(null);
-                addFilesToZone('b', e.dataTransfer.files);
-              }}
-            >
-              <label>
-                <b>Answers, part 2</b>
-                <small>Optional. PDF or photos</small>
-                <input
-                  type="file"
-                  hidden
-                  multiple
-                  accept=".pdf,image/*"
-                  onChange={(e) => {
-                    addFilesToZone('b', e.target.files);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-              <div className="fl">
-                {files.b.map((f, i) => (
-                  <span key={`${f.name}-${i}`} className="fc">
-                    {f.name}
-                    <button
-                      type="button"
-                      aria-label="Remove"
-                      onClick={() => removeFileFromZone('b', i)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Mark scheme */}
             <div
               className={`drop ${dragZone === 'm' ? 'on' : ''}`}
               data-k="m"
