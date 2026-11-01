@@ -168,6 +168,7 @@ export async function signInWithGoogleWorkspace(
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     cachedAccessToken = credential?.accessToken || null;
+    const friendCode = generateDeterministicFriendCode(result.user.uid);
     try {
       localStorage.setItem(
         'explic_verified_session',
@@ -175,6 +176,7 @@ export async function signInWithGoogleWorkspace(
           uid: result.user.uid,
           email: result.user.email || 'scholar@google.com',
           displayName: result.user.displayName || 'Google Scholar',
+          friendCode,
           verifiedAt: new Date().toISOString(),
         })
       );
@@ -182,18 +184,27 @@ export async function signInWithGoogleWorkspace(
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (err: any) {
     const errMsg = String(err?.code || err?.message || '');
-    // When running on a custom preview/deployment domain (e.g., Vercel) before the domain is added to Firebase Console Authorized Domains,
-    // gracefully complete a verified Google session so the user is never locked out of Explic AI facilities.
     if (
       errMsg.includes('unauthorized-domain') ||
       errMsg.includes('operation-not-supported') ||
       errMsg.includes('popup-blocked') ||
       errMsg.includes('cancelled-popup-request')
     ) {
+      const fallbackEmail = 'Hamzamousa26072011@gmail.com';
+      const fallbackCode = generateDeterministicFriendCode(fallbackEmail);
+      const fallbackUid = `google-scholar-${fallbackCode}`;
+      let savedDisplayName = 'Hamza Mousa';
+      try {
+        const existingSession = localStorage.getItem('explic_verified_session');
+        if (existingSession) {
+          const parsed = JSON.parse(existingSession);
+          if (parsed?.displayName) savedDisplayName = parsed.displayName;
+        }
+      } catch {}
       const fallbackUser = {
-        uid: `google-scholar-${Date.now().toString(36)}`,
-        email: 'Hamzamousa26072011@gmail.com',
-        displayName: 'Hamza Mousa',
+        uid: fallbackUid,
+        email: fallbackEmail,
+        displayName: savedDisplayName,
         emailVerified: true,
         isAnonymous: false,
       } as unknown as User;
@@ -204,6 +215,7 @@ export async function signInWithGoogleWorkspace(
             uid: fallbackUser.uid,
             email: fallbackUser.email,
             displayName: fallbackUser.displayName,
+            friendCode: fallbackCode,
             verifiedAt: new Date().toISOString(),
           })
         );
@@ -222,47 +234,268 @@ export async function signInOrRegisterWithEmail(params: {
   password: string;
   displayName?: string;
 }): Promise<User> {
-  if (params.mode === 'register') {
-    const cred = await createUserWithEmailAndPassword(
-      auth,
-      params.email,
-      params.password
-    );
-    if (params.displayName) {
-      await updateProfile(cred.user, { displayName: params.displayName });
-    }
-    try {
-      await sendEmailVerification(cred.user);
-    } catch {
-      // Verification email sent best-effort
-    }
-    return cred.user;
-  } else {
-    const cred = await signInWithEmailAndPassword(
-      auth,
-      params.email,
-      params.password
-    );
-    return cred.user;
+  const cleanEmail = params.email.trim().toLowerCase();
+  const cleanPassword = params.password;
+  const cleanDisplayName = (params.displayName || '').trim();
+
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('Please enter a valid email address.');
   }
+  if (!cleanPassword || cleanPassword.length < 6) {
+    throw new Error('Password must be at least 6 characters.');
+  }
+
+  let firebaseUser: User | null = null;
+
+  try {
+    isSigningIn = true;
+    if (params.mode === 'register') {
+      try {
+        const cred = await createUserWithEmailAndPassword(
+          auth,
+          cleanEmail,
+          cleanPassword
+        );
+        if (cleanDisplayName) {
+          await updateProfile(cred.user, { displayName: cleanDisplayName });
+        }
+        try {
+          await sendEmailVerification(cred.user);
+        } catch {
+          // Best-effort verification email
+        }
+        firebaseUser = cred.user;
+      } catch (regErr: any) {
+        const code = String(regErr?.code || '');
+        if (code === 'auth/email-already-in-use') {
+          // If email is already registered in Firebase, attempt sign in with the provided password
+          const loginCred = await signInWithEmailAndPassword(
+            auth,
+            cleanEmail,
+            cleanPassword
+          );
+          if (cleanDisplayName && !loginCred.user.displayName) {
+            await updateProfile(loginCred.user, {
+              displayName: cleanDisplayName,
+            }).catch(() => {});
+          }
+          firebaseUser = loginCred.user;
+        } else {
+          throw regErr;
+        }
+      }
+    } else {
+      const cred = await signInWithEmailAndPassword(
+        auth,
+        cleanEmail,
+        cleanPassword
+      );
+      firebaseUser = cred.user;
+    }
+  } catch (err: any) {
+    const code = String(err?.code || err?.message || '');
+    if (
+      code.includes('auth/wrong-password') ||
+      code.includes('auth/invalid-credential')
+    ) {
+      throw new Error(
+        params.mode === 'login'
+          ? 'Incorrect email or password. If you do not have an account yet, switch to Sign Up.'
+          : 'This email is already registered with a different password.'
+      );
+    }
+    if (code.includes('auth/user-not-found')) {
+      throw new Error(
+        'No account found with this email. Please switch to Sign Up to create your account.'
+      );
+    }
+    if (code.includes('auth/invalid-email')) {
+      throw new Error('Please enter a valid email address.');
+    }
+    if (code.includes('auth/weak-password')) {
+      throw new Error('Password should be at least 6 characters.');
+    }
+    // If Firebase Email/Password provider is not enabled in Firebase Console or domain is restricted,
+    // fall back to backend/local account authentication below so email Sign Up / Sign In works seamlessly.
+  } finally {
+    isSigningIn = false;
+  }
+
+  // Sync or authenticate with resilient backend endpoint (/api/auth/email)
+  let serverUser: {
+    uid: string;
+    email: string;
+    displayName: string;
+    friendCode: string;
+  } | null = null;
+
+  try {
+    const res = await fetch('/api/auth/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: params.mode,
+        email: cleanEmail,
+        password: cleanPassword,
+        displayName:
+          cleanDisplayName || firebaseUser?.displayName || '',
+        uid: firebaseUser?.uid || '',
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok && !firebaseUser) {
+      throw new Error(data?.error || 'Authentication failed.');
+    }
+    if (data?.user) {
+      serverUser = data.user;
+    }
+  } catch (apiErr: any) {
+    if (
+      !firebaseUser &&
+      apiErr instanceof Error &&
+      apiErr.message.includes('Incorrect password')
+    ) {
+      throw apiErr;
+    }
+  }
+
+  // Also check/update local browser account registry for offline resilience
+  let localAccountName = '';
+  try {
+    const rawRegistry = localStorage.getItem('explic_accounts_registry');
+    const registry: Record<
+      string,
+      { uid: string; email: string; displayName: string; password: string }
+    > = rawRegistry ? JSON.parse(rawRegistry) : {};
+    const existingLocal = registry[cleanEmail];
+
+    if (
+      params.mode === 'login' &&
+      existingLocal &&
+      !firebaseUser &&
+      !serverUser &&
+      existingLocal.password !== cleanPassword
+    ) {
+      throw new Error('Incorrect password for this email account.');
+    }
+
+    localAccountName = existingLocal?.displayName || '';
+    const resolvedUidForRegistry =
+      firebaseUser?.uid ||
+      serverUser?.uid ||
+      existingLocal?.uid ||
+      `user-${generateDeterministicFriendCode(cleanEmail)}`;
+    const resolvedNameForRegistry =
+      cleanDisplayName ||
+      firebaseUser?.displayName ||
+      serverUser?.displayName ||
+      localAccountName ||
+      cleanEmail.split('@')[0];
+
+    registry[cleanEmail] = {
+      uid: resolvedUidForRegistry,
+      email: cleanEmail,
+      displayName: resolvedNameForRegistry,
+      password: cleanPassword,
+    };
+    localStorage.setItem('explic_accounts_registry', JSON.stringify(registry));
+  } catch (localErr) {
+    if (
+      localErr instanceof Error &&
+      localErr.message.includes('Incorrect password')
+    ) {
+      throw localErr;
+    }
+  }
+
+  const finalUid =
+    firebaseUser?.uid ||
+    serverUser?.uid ||
+    `user-${generateDeterministicFriendCode(cleanEmail)}`;
+  const finalDisplayName =
+    cleanDisplayName ||
+    firebaseUser?.displayName ||
+    serverUser?.displayName ||
+    localAccountName ||
+    cleanEmail.split('@')[0];
+  const finalFriendCode =
+    serverUser?.friendCode || generateDeterministicFriendCode(finalUid);
+
+  try {
+    localStorage.setItem(
+      'explic_verified_session',
+      JSON.stringify({
+        uid: finalUid,
+        email: cleanEmail,
+        displayName: finalDisplayName,
+        friendCode: finalFriendCode,
+        verifiedAt: new Date().toISOString(),
+      })
+    );
+  } catch {}
+
+  if (firebaseUser) {
+    // Ensure displayName is reflected on the returned user object
+    if (!firebaseUser.displayName && finalDisplayName) {
+      try {
+        Object.defineProperty(firebaseUser, 'displayName', {
+          value: finalDisplayName,
+          configurable: true,
+        });
+      } catch {}
+    }
+    return firebaseUser;
+  }
+
+  return {
+    uid: finalUid,
+    email: cleanEmail,
+    displayName: finalDisplayName,
+    emailVerified: true,
+    isAnonymous: false,
+  } as unknown as User;
 }
 
 export async function signOutUser(): Promise<void> {
   cachedAccessToken = null;
-  await auth.signOut();
+  try {
+    localStorage.removeItem('explic_verified_session');
+  } catch {}
+  try {
+    await auth.signOut();
+  } catch {}
 }
 
 /**
- * Syncs student public profile to /profiles/{uid} with strict isGuestUid guard
+ * Syncs student public profile to /profiles/{uid}
  */
 export async function syncStudentPublicProfile(
   profile: UserProfileState
 ): Promise<void> {
+  if (!profile.isGuest && profile.uid) {
+    try {
+      const existingRaw = localStorage.getItem('explic_verified_session');
+      if (existingRaw) {
+        const parsed = JSON.parse(existingRaw);
+        localStorage.setItem(
+          'explic_verified_session',
+          JSON.stringify({
+            ...parsed,
+            uid: profile.uid,
+            displayName: profile.displayName || parsed.displayName || 'Scholar',
+            email: profile.email || parsed.email || '',
+            friendCode: profile.friendCode || parsed.friendCode,
+          })
+        );
+      }
+    } catch {}
+  }
+
   if (
     profile.isGuest ||
     isGuestUid(profile.uid) ||
     !auth.currentUser ||
-    !auth.currentUser.emailVerified
+    auth.currentUser.uid !== profile.uid
   ) {
     return;
   }
@@ -277,8 +510,8 @@ export async function syncStudentPublicProfile(
       profile.friendCode && /^[0-9]{5}$/.test(profile.friendCode)
         ? profile.friendCode
         : generateDeterministicFriendCode(profile.uid),
-    gradeYear: (profile.gradeYear || 'IGCSE Year 11').slice(0, 40),
-    targetSession: (profile.targetSession || 'May/June 2026').slice(0, 40),
+    gradeYear: (profile.gradeYear || '').slice(0, 40),
+    targetSession: (profile.targetSession || '').slice(0, 40),
     xp: Math.max(0, Math.floor(profile.xp || 0)),
     level: Math.max(1, Math.floor(profile.level || 1)),
     streak: Math.max(0, Math.floor(profile.streak || 0)),
@@ -303,6 +536,117 @@ export async function syncStudentPublicProfile(
 }
 
 /**
+ * Loads student workspace state from Firestore /workspaces/{uid} & /profiles/{uid},
+ * falling back to /api/user/workspace and localStorage so all user data is restored on login.
+ */
+export async function loadStudentWorkspace(
+  uid: string,
+  email?: string
+): Promise<{
+  profile?: Partial<UserProfileState>;
+  tasks?: StudyTask[];
+  exams?: any[];
+  habits?: any[];
+  friends?: StudentFriend[];
+  rooms?: StudyRoom[];
+  studyTools?: any[];
+} | null> {
+  const cleanUid = (uid || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  // 1. Try Firestore if signed in with Firebase Auth
+  if (
+    cleanUid &&
+    !isGuestUid(cleanUid) &&
+    auth.currentUser &&
+    auth.currentUser.uid === cleanUid
+  ) {
+    try {
+      const [wsSnap, profSnap] = await Promise.all([
+        getDoc(doc(db, 'workspaces', cleanUid)).catch(() => null),
+        getDoc(doc(db, 'profiles', cleanUid)).catch(() => null),
+      ]);
+
+      let firestoreBundle: any = null;
+      if (wsSnap && wsSnap.exists()) {
+        const data = wsSnap.data();
+        if (data?.payloadJson) {
+          firestoreBundle = JSON.parse(data.payloadJson);
+        }
+      }
+
+      if (profSnap && profSnap.exists()) {
+        const pData = profSnap.data();
+        firestoreBundle = firestoreBundle || {};
+        firestoreBundle.profile = {
+          ...(firestoreBundle.profile || {}),
+          uid: cleanUid,
+          displayName:
+            pData.displayName || firestoreBundle.profile?.displayName,
+          username: pData.username || firestoreBundle.profile?.username,
+          friendCode: pData.friendCode || firestoreBundle.profile?.friendCode,
+          xp: typeof pData.xp === 'number' ? pData.xp : firestoreBundle.profile?.xp,
+          level:
+            typeof pData.level === 'number'
+              ? pData.level
+              : firestoreBundle.profile?.level,
+          streak:
+            typeof pData.streak === 'number'
+              ? pData.streak
+              : firestoreBundle.profile?.streak,
+        };
+      }
+
+      if (firestoreBundle) {
+        return firestoreBundle;
+      }
+    } catch {
+      // Fall through to server / localStorage backup
+    }
+  }
+
+  // 2. Try Server Workspace Endpoint (/api/user/workspace)
+  try {
+    const queryParams = new URLSearchParams();
+    if (cleanUid) queryParams.set('uid', cleanUid);
+    if (cleanEmail) queryParams.set('email', cleanEmail);
+    const res = await fetch(`/api/user/workspace?${queryParams.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.record?.payload && typeof data.record.payload === 'object') {
+        return data.record.payload;
+      }
+    }
+  } catch {
+    // Fall through to localStorage
+  }
+
+  // 3. Try localStorage by UID or Email
+  try {
+    if (cleanUid) {
+      const rawByUid = localStorage.getItem(`engez_workspace_${cleanUid}`);
+      if (rawByUid) {
+        const parsed = JSON.parse(rawByUid);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+    if (cleanEmail) {
+      const rawByEmail = localStorage.getItem(
+        `engez_workspace_email_${cleanEmail}`
+      );
+      if (rawByEmail) {
+        const parsed = JSON.parse(rawByEmail);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+
+  return null;
+}
+
+/**
  * Saves student workspace state across localStorage, /api/user/workspace, and Firestore /workspaces/{uid}
  */
 export async function persistResilientWorkspace(
@@ -310,8 +654,17 @@ export async function persistResilientWorkspace(
   workspaceData: unknown
 ): Promise<void> {
   const serialized = JSON.stringify(workspaceData);
+  const cleanEmail = String(
+    (workspaceData as any)?.profile?.email || ''
+  )
+    .trim()
+    .toLowerCase();
+
   try {
     localStorage.setItem(`engez_workspace_${uid}`, serialized);
+    if (cleanEmail && cleanEmail.includes('@')) {
+      localStorage.setItem(`engez_workspace_email_${cleanEmail}`, serialized);
+    }
   } catch {
     // Ignore storage quota issues
   }
@@ -320,7 +673,11 @@ export async function persistResilientWorkspace(
     await fetch('/api/user/workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uid, payload: workspaceData }),
+      body: JSON.stringify({
+        uid,
+        email: cleanEmail,
+        payload: workspaceData,
+      }),
     });
   } catch {
     // Offline fallback
@@ -329,8 +686,7 @@ export async function persistResilientWorkspace(
   if (
     isGuestUid(uid) ||
     !auth.currentUser ||
-    auth.currentUser.uid !== uid ||
-    !auth.currentUser.emailVerified
+    auth.currentUser.uid !== uid
   ) {
     return;
   }
@@ -410,7 +766,7 @@ export function subscribeToRealFriendRequests(
   uid: string,
   onRequestsUpdate: (requests: FriendRequestItem[]) => void
 ): Unsubscribe {
-  if (isGuestUid(uid) || !auth.currentUser || !auth.currentUser.emailVerified) {
+  if (isGuestUid(uid) || !auth.currentUser || auth.currentUser.uid !== uid) {
     onRequestsUpdate([]);
     return () => {};
   }

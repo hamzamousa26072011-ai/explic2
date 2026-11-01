@@ -3,6 +3,8 @@ import { ThemeMode } from '../types';
 
 interface AiScholarTabProps {
   theme?: ThemeMode;
+  isSignedIn?: boolean;
+  onRequireSignIn?: () => void;
   onTriggerSecurityLockdown?: (input: string, action: string) => boolean;
   onAwardFocusXp?: (xpAmount: number) => void;
 }
@@ -613,6 +615,8 @@ const EMPTY_CHAT_HTML =
 
 export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   theme = 'light',
+  isSignedIn = true,
+  onRequireSignIn,
   onTriggerSecurityLockdown,
   onAwardFocusXp,
 }) => {
@@ -667,6 +671,10 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   };
 
   const handleSendChat = async () => {
+    if (!isSignedIn && onRequireSignIn) {
+      onRequireSignIn();
+      return;
+    }
     if (busy) {
       ctlRef.current?.abort();
       return;
@@ -888,6 +896,10 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   };
 
   const handleRunCorrection = async () => {
+    if (!isSignedIn && onRequireSignIn) {
+      onRequireSignIn();
+      return;
+    }
     setRunning(true);
     setErrMsg('');
     if (resRef.current) resRef.current.innerHTML = '';

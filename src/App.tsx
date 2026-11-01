@@ -54,9 +54,11 @@ import {
   fetchGoogleClassroomCoursework,
   getAccessToken,
   initAuth,
+  loadStudentWorkspace,
   persistResilientWorkspace,
   signInOrRegisterWithEmail,
   signInWithGoogleWorkspace,
+  signOutUser,
   subscribeToRealFriendRequests,
   syncStudentPublicProfile,
 } from './utils/firebaseClient';
@@ -163,49 +165,138 @@ export default function App() {
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const [isSyncingClassroom, setIsSyncingClassroom] = useState(false);
   const [nudgedFriendName, setNudgedFriendName] = useState<string | null>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('autostart') === '1') return false;
-      try {
-        const saved = localStorage.getItem('explic_verified_session');
-        if (saved) return false;
-      } catch {}
-    }
-    return true;
-  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const wakeLockSentinelRef = useRef<any>(null);
+  const isHydratingRef = useRef<boolean>(false);
 
-  // Purge any cached localStorage entries containing personal data, test habits, or subject codes
-  useEffect(() => {
+  const hydrateUserSession = async (params: {
+    uid: string;
+    email: string;
+    displayName?: string;
+    friendCode?: string;
+    preferNewDisplayName?: boolean;
+  }) => {
+    isHydratingRef.current = true;
     try {
-      Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith('engez_workspace_')) {
-          localStorage.removeItem(key);
+      const savedBundle = await loadStudentWorkspace(params.uid, params.email);
+      const code =
+        params.friendCode ||
+        savedBundle?.profile?.friendCode ||
+        generateDeterministicFriendCode(
+          params.uid || params.email || 'scholar-workspace'
+        );
+
+      const savedName = savedBundle?.profile?.displayName;
+      const resolvedDisplayName =
+        params.preferNewDisplayName && params.displayName
+          ? params.displayName
+          : savedName && savedName !== 'Scholar'
+          ? savedName
+          : params.displayName ||
+            savedName ||
+            (params.email ? params.email.split('@')[0] : 'Scholar');
+
+      if (savedBundle) {
+        if (Array.isArray(savedBundle.tasks)) {
+          setTasks(savedBundle.tasks);
         }
-      });
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('autostart') === '1') {
-        setProfile((prev) => ({
+        if (Array.isArray(savedBundle.exams)) {
+          setExams(savedBundle.exams);
+        }
+        if (Array.isArray(savedBundle.habits)) {
+          setHabits(
+            savedBundle.habits.filter(
+              (h: any) => !isTestSubjectHabit(h?.name || '')
+            )
+          );
+        }
+        if (Array.isArray(savedBundle.friends)) {
+          setFriends(
+            savedBundle.friends.filter(
+              (f: any) =>
+                !isTestSubject(f?.displayName || '') &&
+                !isTestSubject(f?.username || '')
+            )
+          );
+        }
+        if (Array.isArray(savedBundle.rooms)) {
+          setRooms(savedBundle.rooms);
+        }
+        if (Array.isArray(savedBundle.studyTools)) {
+          setStudyTools(savedBundle.studyTools);
+        }
+      }
+
+      setProfile((prev) => {
+        const nextProfile: UserProfileState = {
           ...prev,
+          ...(savedBundle?.profile || {}),
+          uid: params.uid,
+          displayName: resolvedDisplayName,
+          username:
+            savedBundle?.profile?.username || prev.username || 'scholar',
+          email:
+            params.email || savedBundle?.profile?.email || prev.email || '',
+          gradeYear: '',
+          targetSession: '',
+          friendCode: code,
           isGuest: false,
           twoStepVerified: true,
-        }));
-      }
+        };
+        try {
+          localStorage.setItem(
+            'explic_verified_session',
+            JSON.stringify({
+              uid: nextProfile.uid,
+              displayName: nextProfile.displayName,
+              email: nextProfile.email,
+              friendCode: nextProfile.friendCode,
+              verifiedAt: new Date().toISOString(),
+            })
+          );
+        } catch {}
+        syncStudentPublicProfile(nextProfile).catch(() => {});
+        return nextProfile;
+      });
+    } finally {
+      isHydratingRef.current = false;
+    }
+  };
+
+  // Restore saved session or guest workspace on mount without forcing login
+  useEffect(() => {
+    try {
       const savedVerified = localStorage.getItem('explic_verified_session');
       if (savedVerified) {
         const parsed = JSON.parse(savedVerified);
-        if (parsed && parsed.email) {
-          setProfile((prev) => ({
-            ...prev,
-            uid: parsed.uid || prev.uid,
-            displayName: parsed.displayName || prev.displayName,
-            email: parsed.email,
-            isGuest: false,
-            twoStepVerified: true,
-          }));
+        if (parsed && (parsed.uid || parsed.email)) {
+          hydrateUserSession({
+            uid:
+              parsed.uid ||
+              `user-${generateDeterministicFriendCode(parsed.email)}`,
+            email: parsed.email || '',
+            displayName: parsed.displayName,
+            friendCode: parsed.friendCode,
+          }).catch(() => {});
+          return;
         }
       }
+      // If browsing as guest, restore any saved guest workspace
+      loadStudentWorkspace('guest-workspace-user').then((guestBundle) => {
+        if (!guestBundle) return;
+        if (Array.isArray(guestBundle.tasks)) setTasks(guestBundle.tasks);
+        if (Array.isArray(guestBundle.exams)) setExams(guestBundle.exams);
+        if (Array.isArray(guestBundle.habits)) {
+          setHabits(
+            guestBundle.habits.filter(
+              (h: any) => !isTestSubjectHabit(h?.name || '')
+            )
+          );
+        }
+        if (Array.isArray(guestBundle.studyTools)) {
+          setStudyTools(guestBundle.studyTools);
+        }
+      });
     } catch {}
   }, []);
 
@@ -213,24 +304,12 @@ export default function App() {
     let unsubRequests: (() => void) | null = null;
     const unsubAuth = initAuth((user) => {
       if (user) {
-        const code = generateDeterministicFriendCode(
-          user.uid || 'scholar-workspace'
-        );
-        const updatedProfile: UserProfileState = {
-          ...profile,
+        hydrateUserSession({
           uid: user.uid,
-          displayName: user.displayName || profile.displayName || 'Scholar',
-          username: 'scholar',
-          email: user.email || profile.email || '',
-          gradeYear: '',
-          targetSession: '',
-          friendCode: code,
-          isGuest: false,
-          twoStepVerified: true,
-        };
-        setProfile(updatedProfile);
+          email: user.email || '',
+          displayName: user.displayName || undefined,
+        }).catch(() => {});
         setIsAuthModalOpen(false);
-        syncStudentPublicProfile(updatedProfile).catch(() => {});
 
         if (unsubRequests) unsubRequests();
         unsubRequests = subscribeToRealFriendRequests(user.uid, (reqs) => {
@@ -247,12 +326,14 @@ export default function App() {
 
   const handleSelectNavTab = (tabId: NavTabId) => {
     setActiveTab(tabId);
-    if ((tabId === 'scholar' || tabId === 'planner') && profile.isGuest) {
+    // Ask the user to log in ONLY when using AI (AI Examiner tab)
+    if (tabId === 'scholar' && profile.isGuest) {
       setIsAuthModalOpen(true);
     }
   };
 
   useEffect(() => {
+    if (isHydratingRef.current) return;
     const bundle = {
       profile,
       tasks,
@@ -265,6 +346,9 @@ export default function App() {
       studyTools,
     };
     persistResilientWorkspace(profile.uid, bundle).catch(() => {});
+    if (!profile.isGuest) {
+      syncStudentPublicProfile(profile).catch(() => {});
+    }
   }, [profile, tasks, exams, habits, friends, rooms, studyTools]);
 
   const handleTriggerSecurityLockdown = (
@@ -378,58 +462,37 @@ export default function App() {
         onReleaseQuarantine={() => setSecurityIncident(null)}
       />
 
-      {/* Sign-In & Two-Step Verification Modal */}
+      {/* Sign-In Modal (Google, Email Sign In/Up, or Continue as Guest) */}
       <AuthGateModal
         isOpen={isAuthModalOpen}
         theme={theme}
-        canDismiss={!profile.isGuest}
         onClose={() => setIsAuthModalOpen(false)}
+        onContinueAsGuest={() => {
+          setIsAuthModalOpen(false);
+          if (activeTab === 'scholar') {
+            setActiveTab('dashboard');
+          }
+        }}
         onGoogleSignIn={async () => {
           const res = await signInWithGoogleWorkspace();
           if (res.user) {
-            const code = generateDeterministicFriendCode(res.user.uid);
-            const verifiedData = {
+            await hydrateUserSession({
               uid: res.user.uid,
-              displayName: res.user.displayName || 'Scholar',
               email: res.user.email || '',
-              friendCode: code,
-            };
-            try {
-              localStorage.setItem(
-                'explic_verified_session',
-                JSON.stringify(verifiedData)
-              );
-            } catch {}
-            setProfile((prev) => ({
-              ...prev,
-              ...verifiedData,
-              isGuest: false,
-              twoStepVerified: true,
-            }));
+              displayName: res.user.displayName || undefined,
+            });
             setIsAuthModalOpen(false);
           }
         }}
-        onCompleteTwoStepAuth={async ({ email, displayName }) => {
-          const uid = `verified-${generateDeterministicFriendCode(email)}`;
-          const friendCode = generateDeterministicFriendCode(uid);
-          const verifiedData = {
-            uid,
-            displayName: displayName || email.split('@')[0],
-            email,
-            friendCode,
-          };
-          try {
-            localStorage.setItem(
-              'explic_verified_session',
-              JSON.stringify(verifiedData)
-            );
-          } catch {}
-          setProfile((prev) => ({
-            ...prev,
-            ...verifiedData,
-            isGuest: false,
-            twoStepVerified: true,
-          }));
+        onEmailAuth={async (params) => {
+          const u = await signInOrRegisterWithEmail(params);
+          await hydrateUserSession({
+            uid: u.uid,
+            email: u.email || params.email,
+            displayName: params.displayName || u.displayName || undefined,
+            preferNewDisplayName:
+              params.mode === 'register' && Boolean(params.displayName),
+          });
           setIsAuthModalOpen(false);
         }}
       />
@@ -644,19 +707,21 @@ export default function App() {
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Sign In / 2-Step Verify</span>
+                <span>Sign In</span>
               </button>
             ) : (
-              <span
-                className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold ${
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
                   isLight
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+                    : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-950/60'
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                <span>{profile.displayName || 'Verified'}</span>
-              </span>
+                <span>{profile.displayName || 'Scholar'}</span>
+              </button>
             )}
 
             <button
@@ -701,6 +766,8 @@ export default function App() {
               {activeTab === 'scholar' && (
                 <AiScholarTab
                   theme={theme}
+                  isSignedIn={!profile.isGuest}
+                  onRequireSignIn={() => setIsAuthModalOpen(true)}
                   onTriggerSecurityLockdown={handleTriggerSecurityLockdown}
                   onAwardFocusXp={(xp) => handleAwardFocusXp(xp, 0)}
                 />
@@ -939,24 +1006,28 @@ export default function App() {
                   onGoogleLogin={async () => {
                     const res = await signInWithGoogleWorkspace();
                     if (res.user) {
-                      setProfile((prev) => ({
-                        ...prev,
+                      await hydrateUserSession({
                         uid: res.user.uid,
-                        displayName: prev.displayName,
-                        email: '',
-                        isGuest: false,
-                      }));
+                        email: res.user.email || '',
+                        displayName: res.user.displayName || undefined,
+                      });
                     }
                   }}
                   onEmailAuth={async (params) => {
                     const u = await signInOrRegisterWithEmail(params);
-                    setProfile((prev) => ({
-                      ...prev,
+                    await hydrateUserSession({
                       uid: u.uid,
-                      displayName: params.displayName || prev.displayName,
-                      email: '',
-                      isGuest: false,
-                    }));
+                      email: u.email || params.email,
+                      displayName:
+                        params.displayName || u.displayName || undefined,
+                      preferNewDisplayName:
+                        params.mode === 'register' &&
+                        Boolean(params.displayName),
+                    });
+                  }}
+                  onSignOut={async () => {
+                    await signOutUser();
+                    setProfile(createInitialUserProfile());
                   }}
                 />
               )}
@@ -987,7 +1058,7 @@ export default function App() {
             <button
               key={item.id}
               type="button"
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => handleSelectNavTab(item.id)}
               className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl text-[11px] font-semibold whitespace-nowrap ${
                 isActive
                   ? isLight

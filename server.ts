@@ -1,5 +1,7 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import cors from 'cors';
@@ -4856,22 +4858,219 @@ Return valid JSON with keys:
   }
 });
 
-// 3. Resilient Server Workspace Backup Endpoints
-app.post('/api/user/workspace', (req, res) => {
-  const { uid = 'guest-workspace-user', payload } = req.body || {};
-  workspaceMemoryStore.set(String(uid), {
-    payload,
-    updatedAt: new Date().toISOString(),
+// 3. Resilient Server User Accounts & Workspace Backup Endpoints
+interface StoredUserAccount {
+  uid: string;
+  email: string;
+  displayName: string;
+  passwordHash: string;
+  friendCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const PERSIST_STORE_PATH = '/tmp/explic_persistent_store.json';
+const userAccountStore = new Map<string, StoredUserAccount>();
+
+function deriveDeterministicFriendCode(seed: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const num = Math.abs(hash) % 90000;
+  return String(10000 + num);
+}
+
+function loadPersistentDiskStore() {
+  try {
+    if (fs.existsSync(PERSIST_STORE_PATH)) {
+      const raw = fs.readFileSync(PERSIST_STORE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed?.workspaces && typeof parsed.workspaces === 'object') {
+        for (const [k, v] of Object.entries(parsed.workspaces)) {
+          if (v && typeof v === 'object') {
+            workspaceMemoryStore.set(k, v as { payload: unknown; updatedAt: string });
+          }
+        }
+      }
+      if (parsed?.accounts && typeof parsed.accounts === 'object') {
+        for (const [k, v] of Object.entries(parsed.accounts)) {
+          if (v && typeof v === 'object') {
+            userAccountStore.set(k, v as StoredUserAccount);
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore disk read errors
+  }
+}
+
+function savePersistentDiskStore() {
+  try {
+    const workspacesObj: Record<string, unknown> = {};
+    workspaceMemoryStore.forEach((val, key) => {
+      workspacesObj[key] = val;
+    });
+    const accountsObj: Record<string, unknown> = {};
+    userAccountStore.forEach((val, key) => {
+      accountsObj[key] = val;
+    });
+    fs.writeFileSync(
+      PERSIST_STORE_PATH,
+      JSON.stringify({ workspaces: workspacesObj, accounts: accountsObj }),
+      'utf8'
+    );
+  } catch {
+    // Ignore disk write errors
+  }
+}
+
+loadPersistentDiskStore();
+
+app.post('/api/auth/email', (req, res) => {
+  const {
+    mode = 'login',
+    email = '',
+    password = '',
+    displayName = '',
+    uid: clientUid = '',
+  } = req.body || {};
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+  const rawPassword = String(password);
+  if (rawPassword.length < 6) {
+    return res
+      .status(400)
+      .json({ error: 'Password must be at least 6 characters.' });
+  }
+
+  const passwordHash = crypto
+    .createHash('sha256')
+    .update(`explic_salt_${rawPassword}`)
+    .digest('hex');
+
+  const deterministicUid =
+    String(clientUid).trim() ||
+    `user-${crypto.createHash('sha256').update(cleanEmail).digest('hex').slice(0, 20)}`;
+
+  const existing = userAccountStore.get(cleanEmail);
+  const nowIso = new Date().toISOString();
+
+  if (mode === 'login' && existing) {
+    if (existing.passwordHash && existing.passwordHash !== passwordHash) {
+      return res
+        .status(401)
+        .json({ error: 'Incorrect password for this email account.' });
+    }
+    if (displayName && String(displayName).trim()) {
+      existing.displayName = String(displayName).trim();
+    }
+    existing.updatedAt = nowIso;
+    userAccountStore.set(cleanEmail, existing);
+    savePersistentDiskStore();
+
+    const savedWorkspace =
+      workspaceMemoryStore.get(existing.uid) ||
+      workspaceMemoryStore.get(`email:${cleanEmail}`) ||
+      null;
+
+    return res.json({
+      user: {
+        uid: existing.uid,
+        email: existing.email,
+        displayName: existing.displayName,
+        friendCode: existing.friendCode,
+      },
+      workspace: savedWorkspace?.payload || null,
+    });
+  }
+
+  // Register new account or initialize account on first login
+  const resolvedUid = existing?.uid || deterministicUid;
+  const resolvedName =
+    String(displayName).trim() ||
+    existing?.displayName ||
+    cleanEmail.split('@')[0] ||
+    'Scholar';
+  const resolvedCode =
+    existing?.friendCode || deriveDeterministicFriendCode(resolvedUid);
+
+  const account: StoredUserAccount = {
+    uid: resolvedUid,
+    email: cleanEmail,
+    displayName: resolvedName,
+    passwordHash,
+    friendCode: resolvedCode,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso,
+  };
+
+  userAccountStore.set(cleanEmail, account);
+  savePersistentDiskStore();
+
+  const savedWorkspace =
+    workspaceMemoryStore.get(account.uid) ||
+    workspaceMemoryStore.get(`email:${cleanEmail}`) ||
+    null;
+
+  return res.json({
+    user: {
+      uid: account.uid,
+      email: account.email,
+      displayName: account.displayName,
+      friendCode: account.friendCode,
+    },
+    workspace: savedWorkspace?.payload || null,
   });
-  return res.json({ status: 'ok', updatedAt: new Date().toISOString() });
+});
+
+app.post('/api/user/workspace', (req, res) => {
+  const { uid = 'guest-workspace-user', email = '', payload } = req.body || {};
+  const cleanUid = String(uid).trim() || 'guest-workspace-user';
+  const cleanEmail = String(
+    email || (payload as any)?.profile?.email || ''
+  )
+    .trim()
+    .toLowerCase();
+  const nowIso = new Date().toISOString();
+  const entry = {
+    payload,
+    updatedAt: nowIso,
+  };
+
+  workspaceMemoryStore.set(cleanUid, entry);
+  if (cleanEmail && cleanEmail.includes('@')) {
+    workspaceMemoryStore.set(`email:${cleanEmail}`, entry);
+    const acc = userAccountStore.get(cleanEmail);
+    const profileName = String((payload as any)?.profile?.displayName || '').trim();
+    if (acc && profileName && profileName !== 'Scholar') {
+      acc.displayName = profileName;
+      acc.updatedAt = nowIso;
+      userAccountStore.set(cleanEmail, acc);
+    }
+  }
+  savePersistentDiskStore();
+
+  return res.json({ status: 'ok', updatedAt: nowIso });
 });
 
 app.get('/api/user/workspace', (req, res) => {
-  const uid = String(req.query.uid || 'guest-workspace-user');
-  const record = workspaceMemoryStore.get(uid);
+  const uid = String(req.query.uid || 'guest-workspace-user').trim();
+  const email = String(req.query.email || '')
+    .trim()
+    .toLowerCase();
+  const record =
+    workspaceMemoryStore.get(uid) ||
+    (email ? workspaceMemoryStore.get(`email:${email}`) : undefined) ||
+    null;
   return res.json({
     uid,
-    record: record || null,
+    record,
   });
 });
 

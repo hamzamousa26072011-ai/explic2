@@ -526,7 +526,7 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
           <div className="flex items-center gap-3 text-xs">
             <Lock className="w-4 h-4 text-indigo-500 shrink-0" />
             <span>
-              <strong>Sign In Required for AI Facilities:</strong> Please sign in with Google or Two-Step Email Verification to use the AI Voice &amp; Daily Planner Coach.
+              <strong>Sign In Required for AI Coach:</strong> Please sign in with Google or your email account to use the AI Voice &amp; Daily Planner Coach.
             </span>
           </div>
           <button
@@ -534,7 +534,7 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
             onClick={onRequireSignIn}
             className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 ${primaryBtn}`}
           >
-            Sign In / Verify Now
+            Sign In
           </button>
         </div>
       )}

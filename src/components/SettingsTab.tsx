@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Check, Mail, User, Cloud } from 'lucide-react';
+import {
+  Copy,
+  Check,
+  Mail,
+  User,
+  Cloud,
+  LogOut,
+  CheckCircle2,
+  Loader2,
+} from 'lucide-react';
 import { ThemeMode, UserProfileState } from '../types';
 
 interface SettingsTabProps {
@@ -13,6 +22,7 @@ interface SettingsTabProps {
     password: string;
     displayName?: string;
   }) => Promise<void>;
+  onSignOut?: () => Promise<void>;
 }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({
@@ -21,6 +31,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   onUpdateProfile,
   onGoogleLogin,
   onEmailAuth,
+  onSignOut,
 }) => {
   const isLight = theme === 'warm';
 
@@ -33,14 +44,23 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   }, [profile.displayName]);
 
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [emailInput, setEmailInput] = useState('');
+  const [emailInput, setEmailInput] = useState(profile.email || '');
   const [passwordInput, setPasswordInput] = useState('');
   const [authStatusMsg, setAuthStatusMsg] = useState<string | null>(null);
+  const [authErrorMsg, setAuthErrorMsg] = useState<string | null>(null);
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
+
+  useEffect(() => {
+    if (profile.email) {
+      setEmailInput(profile.email);
+    }
+  }, [profile.email]);
 
   const handleSaveIdentity = (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmed = displayName.trim() || 'Scholar';
     onUpdateProfile({
-      displayName: displayName.trim(),
+      displayName: trimmed,
       gradeYear: '',
       targetSession: '',
     });
@@ -48,19 +68,55 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     setTimeout(() => setSavedNotice(false), 2000);
   };
 
+  const handleGoogleClick = async () => {
+    setAuthErrorMsg(null);
+    setAuthStatusMsg(null);
+    setIsSubmittingAuth(true);
+    try {
+      await onGoogleLogin();
+      setAuthStatusMsg(
+        'Signed in with Google and synchronized your cloud workspace.'
+      );
+    } catch (err: any) {
+      setAuthErrorMsg(err?.message || 'Google Sign-In failed.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!emailInput.trim() || !passwordInput.trim()) return;
+    setAuthErrorMsg(null);
+    setAuthStatusMsg(null);
+
+    const cleanEmail = emailInput.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setAuthErrorMsg('Please enter a valid email address.');
+      return;
+    }
+    if (passwordInput.trim().length < 6) {
+      setAuthErrorMsg('Password must be at least 6 characters.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
     try {
       await onEmailAuth({
         mode: authMode,
-        email: emailInput.trim(),
+        email: cleanEmail,
         password: passwordInput,
-        displayName: displayName.trim(),
+        displayName: displayName.trim() || cleanEmail.split('@')[0],
       });
-      setAuthStatusMsg('Connected to Cloud Workspace.');
+      setPasswordInput('');
+      setAuthStatusMsg(
+        authMode === 'register'
+          ? 'Account created and workspace saved to cloud.'
+          : 'Signed in and loaded your saved workspace.'
+      );
     } catch (err: any) {
-      setAuthStatusMsg(err?.message || 'Authentication failed.');
+      setAuthErrorMsg(err?.message || 'Authentication failed.');
+    } finally {
+      setIsSubmittingAuth(false);
     }
   };
 
@@ -86,13 +142,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        {/* Card 1: Scholar Profile (Zero personal data, zero academic level / target exam fields) */}
+        {/* Card 1: Scholar Profile */}
         <section className={`rounded-2xl border p-6 space-y-5 ${cardSurface}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  isLight ? 'bg-slate-100 text-slate-900' : 'bg-white/5 text-white'
+                  isLight
+                    ? 'bg-slate-100 text-slate-900'
+                    : 'bg-white/5 text-white'
                 }`}
               >
                 <User className="w-4 h-4" />
@@ -108,7 +166,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             <button
               type="button"
               onClick={() => {
-                navigator.clipboard.writeText(profile.friendCode).catch(() => {});
+                navigator.clipboard
+                  .writeText(profile.friendCode)
+                  .catch(() => {});
                 setCopiedCode(true);
                 setTimeout(() => setCopiedCode(false), 1800);
               }}
@@ -155,6 +215,42 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               </button>
             </div>
           </form>
+
+          {!profile.isGuest && (
+            <div
+              className={`pt-4 border-t flex items-center justify-between gap-3 text-xs ${
+                isLight ? 'border-[#E2E8F0]' : 'border-white/10'
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">
+                    Signed in as {profile.displayName || 'Scholar'}
+                  </span>
+                </div>
+                {profile.email && (
+                  <div className={`text-[11px] truncate ${mutedText}`}>
+                    {profile.email}
+                  </div>
+                )}
+              </div>
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors ${
+                    isLight
+                      ? 'border-[#E2E8F0] hover:bg-slate-100 text-slate-700'
+                      : 'border-white/10 hover:bg-white/5 text-slate-300'
+                  }`}
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Card 2: Cloud Account & Google Workspace Sync */}
@@ -162,7 +258,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <div className="flex items-center gap-2.5">
             <div
               className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                isLight ? 'bg-slate-100 text-slate-900' : 'bg-white/5 text-white'
+                isLight
+                  ? 'bg-slate-100 text-slate-900'
+                  : 'bg-white/5 text-white'
               }`}
             >
               <Cloud className="w-4 h-4" />
@@ -178,32 +276,37 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <div className="space-y-4 text-xs">
             <button
               type="button"
-              onClick={onGoogleLogin}
+              onClick={handleGoogleClick}
+              disabled={isSubmittingAuth}
               className={`w-full py-2.5 px-4 rounded-xl border font-semibold flex items-center justify-center gap-2.5 transition-colors ${
                 isLight
                   ? 'border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] text-[#0F172A]'
                   : 'border-white/10 bg-white text-slate-900 hover:bg-slate-100'
               }`}
             >
-              <svg className="w-4 h-4" viewBox="0 0 48 48">
-                <path
-                  fill="#EA4335"
-                  d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                />
-                <path
-                  fill="#4285F4"
-                  d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                />
-              </svg>
-              Continue with Google Workspace
+              {isSubmittingAuth ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4" viewBox="0 0 48 48">
+                  <path
+                    fill="#EA4335"
+                    d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                  />
+                </svg>
+              )}
+              <span>Continue with Google Workspace</span>
             </button>
 
             <div className="relative flex py-1 items-center">
@@ -216,15 +319,19 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
             <form onSubmit={handleEmailSubmit} className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className={`font-medium flex items-center gap-1.5 ${mutedText}`}>
+                <span
+                  className={`font-medium flex items-center gap-1.5 ${mutedText}`}
+                >
                   <Mail className="w-3.5 h-3.5" />
                   Email Account
                 </span>
                 <button
                   type="button"
-                  onClick={() =>
-                    setAuthMode(authMode === 'login' ? 'register' : 'login')
-                  }
+                  onClick={() => {
+                    setAuthMode(authMode === 'login' ? 'register' : 'login');
+                    setAuthErrorMsg(null);
+                    setAuthStatusMsg(null);
+                  }}
                   className="underline font-medium"
                 >
                   {authMode === 'login' ? 'Create account' : 'Sign in instead'}
@@ -244,20 +351,27 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 aria-label="Password"
                 value={passwordInput}
                 onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="Password"
+                placeholder="Password (min. 6 characters)"
                 className={`w-full rounded-xl border px-3.5 py-2.5 outline-none transition-colors ${inputSurface}`}
               />
 
               <button
                 type="submit"
+                disabled={isSubmittingAuth}
                 className={`w-full py-2.5 rounded-xl font-semibold border transition-colors ${
                   isLight
                     ? 'border-[#E2E8F0] hover:bg-[#F8FAFC]'
                     : 'border-white/10 hover:bg-white/5'
                 }`}
               >
-                {authMode === 'login' ? 'Sign In' : 'Register Account'}
+                {authMode === 'login' ? 'Sign In' : 'Create Account'}
               </button>
+
+              {authErrorMsg && (
+                <div className="text-[11px] text-red-500 font-medium">
+                  {authErrorMsg}
+                </div>
+              )}
 
               {authStatusMsg && (
                 <div className="text-[11px] text-emerald-500 font-medium">
