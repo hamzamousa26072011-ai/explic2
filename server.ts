@@ -10,6 +10,13 @@ import { toFile } from 'openai/uploads';
 import { PDFDocument } from 'pdf-lib';
 import { GoogleGenAI, Type } from '@google/genai';
 import { generateAnnotatedExaminerPdfBytes } from './src/utils/examinerPdfAnnotator.ts';
+import {
+  getOrCreateUser,
+  saveSqlWorkspace,
+  loadSqlWorkspace,
+  saveSqlEvaluation,
+  getUserEvaluations,
+} from './src/db/users.ts';
 
 dotenv.config();
 
@@ -5267,6 +5274,8 @@ app.post('/api/auth/email', (req, res) => {
     userAccountStore.set(cleanEmail, existing);
     savePersistentDiskStore();
 
+    getOrCreateUser(existing.uid, existing.email, existing.displayName, existing.friendCode).catch(() => {});
+
     const savedWorkspace =
       workspaceMemoryStore.get(existing.uid) ||
       workspaceMemoryStore.get(`email:${cleanEmail}`) ||
@@ -5305,6 +5314,7 @@ app.post('/api/auth/email', (req, res) => {
 
   userAccountStore.set(cleanEmail, account);
   savePersistentDiskStore();
+  getOrCreateUser(account.uid, account.email, account.displayName, account.friendCode).catch(() => {});
 
   const savedWorkspace =
     workspaceMemoryStore.get(account.uid) ||
@@ -5322,7 +5332,7 @@ app.post('/api/auth/email', (req, res) => {
   });
 });
 
-app.post('/api/user/workspace', (req, res) => {
+app.post('/api/user/workspace', async (req, res) => {
   const { uid = 'guest-workspace-user', email = '', payload } = req.body || {};
   const cleanUid = String(uid).trim() || 'guest-workspace-user';
   const cleanEmail = String(
@@ -5349,18 +5359,39 @@ app.post('/api/user/workspace', (req, res) => {
   }
   savePersistentDiskStore();
 
+  if (cleanUid && !cleanUid.startsWith('guest-')) {
+    try {
+      if (cleanEmail) {
+        await getOrCreateUser(cleanUid, cleanEmail);
+      }
+      await saveSqlWorkspace(cleanUid, payload);
+    } catch (sqlErr) {
+      console.warn('Cloud SQL workspace sync note:', (sqlErr as any)?.message);
+    }
+  }
+
   return res.json({ status: 'ok', updatedAt: nowIso });
 });
 
-app.get('/api/user/workspace', (req, res) => {
+app.get('/api/user/workspace', async (req, res) => {
   const uid = String(req.query.uid || 'guest-workspace-user').trim();
   const email = String(req.query.email || '')
     .trim()
     .toLowerCase();
+
+  let sqlData: any = null;
+  if (uid && !uid.startsWith('guest-')) {
+    try {
+      sqlData = await loadSqlWorkspace(uid);
+    } catch {}
+  }
+
   const record =
+    (sqlData ? { payload: sqlData, updatedAt: new Date().toISOString() } : null) ||
     workspaceMemoryStore.get(uid) ||
     (email ? workspaceMemoryStore.get(`email:${email}`) : undefined) ||
     null;
+
   return res.json({
     uid,
     record,
