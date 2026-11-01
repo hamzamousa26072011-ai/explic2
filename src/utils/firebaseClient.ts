@@ -797,11 +797,15 @@ export function subscribeToRealFriendRequests(
       onRequestsUpdate(items);
     },
     (error) => {
+      onRequestsUpdate([]);
       if (
+        auth.currentUser &&
+        auth.currentUser.uid === uid &&
+        auth.currentUser.emailVerified &&
         error instanceof Error &&
         error.message.includes('Missing or insufficient permissions')
       ) {
-        handleFirestoreError(error, OperationType.LIST, path);
+        console.warn('Friend requests listener permission warning:', error.message);
       }
     }
   );

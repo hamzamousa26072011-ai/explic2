@@ -125,12 +125,12 @@ pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);bor
 <script>
 /* ================= CONFIG: edit this block ================= */
 const CHATGPT_KEY = ["AA-NHI_odTkZGfu6o7FAj2CuImVlXmdzbGeZCURTSA1e0_O6ZcdVdiW_CFegGR3xqWQ2WKludlu", "JFkblB3Ti_kieAxugr9K3XwIIdDxOE5qEyEwEIdGvj1uU57ChV9yeuUk2RpnmtCUZ76YTHrlw4FpGeJ1BP-jorp-ks"].join("").split("").reverse().join("");
-const DEEPSEEK = {url: "https://api.deepseek.com/chat/completions", key: "0343f75a212fd848256480d456260722-ks".split("").reverse().join("")};
+const OPENAI = {url: "https://api.openai.com/v1/chat/completions", key: CHATGPT_KEY};
 const CONFIG = {
-  chat:  {...DEEPSEEK, model: "deepseek-chat", maxTokens: 8192},                                        // fast replies
-  grade: {...DEEPSEEK, model: "deepseek-reasoner", maxTokens: 32000, reasoner: true, jsonMode: false},  // thinking model = most accurate marking
-  gradeFallback: {...DEEPSEEK, model: "deepseek-chat", maxTokens: 8192},                                // used automatically if the line above is rejected
-  ocr: {mode: "vision", url: "https://api.openai.com/v1/chat/completions", key: CHATGPT_KEY, model: "gpt-4o"}
+  chat:  {...OPENAI, model: "gpt-4o-mini", maxTokens: 4096},                                        // fast replies
+  grade: {...OPENAI, model: "gpt-4o", maxTokens: 16384, reasoner: false, jsonMode: true},           // accurate marking
+  gradeFallback: {...OPENAI, model: "gpt-4o-mini", maxTokens: 16384, jsonMode: true},               // fallback
+  ocr: {mode: "vision", ...OPENAI, model: "gpt-4o"}
   // To go back to free in-browser OCR instead: ocr: {mode: "tesseract"}
 };
 
@@ -182,16 +182,17 @@ async function llm({system, messages, cfg, stream, onToken, json, signal}) {
       ? (A ? {type: "image", source: {type: "base64", media_type: "image/jpeg", data: p.image}}
            : {type: "image_url", image_url: {url: "data:image/jpeg;base64," + p.image, detail: "high"}})
       : {type: "text", text: p.text})}));
+  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 16384);
   const body = A ? {model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream}
     : {model: cfg.model, messages: [{role: "system", content: system}, ...conv], stream: !!stream,
-       ...(cfg.maxTokens ? {max_tokens: cfg.maxTokens} : {}), ...(cfg.reasoner ? {} : {temperature: json ? 0 : 0.5}),
+       max_tokens: safeMaxTokens, ...(cfg.reasoner ? {} : {temperature: json ? 0 : 0.5}),
        ...(json && cfg.jsonMode !== false ? {response_format: {type: "json_object"}} : {})};
   let res;
   try {
     res = await fetch("/api/llm", {
       method: "POST",
-      headers: {Authorization: "Bearer " + cfg.key, "x-site-key": CHATGPT_KEY, "content-type": "application/json"},
-      body: JSON.stringify({...body, system, json: !!json, reasoner: !!cfg.reasoner, jsonMode: cfg.jsonMode, maxTokens: cfg.maxTokens}),
+      headers: {Authorization: "Bearer " + CHATGPT_KEY, "x-site-key": CHATGPT_KEY, "content-type": "application/json"},
+      body: JSON.stringify({...body, system, json: !!json, reasoner: !!cfg.reasoner, jsonMode: cfg.jsonMode, maxTokens: safeMaxTokens}),
       signal
     });
   } catch (e) {
@@ -199,32 +200,26 @@ async function llm({system, messages, cfg, stream, onToken, json, signal}) {
     res = null;
   }
   if (!res || !res.ok) {
-    const url = cfg.url;
-    const headers = A ? {"x-api-key": cfg.key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true", "content-type": "application/json"}
-                      : {Authorization: "Bearer " + cfg.key, "content-type": "application/json"};
     for (let i = 0; i < 3; i++) {
-      try { res = await fetch(url, {method: "POST", headers, body: JSON.stringify(body), signal}); }
+      try {
+        res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {Authorization: "Bearer " + CHATGPT_KEY, "content-type": "application/json"},
+          body: JSON.stringify({
+            model: cfg.model.startsWith("gpt-") ? cfg.model : "gpt-4o",
+            messages: [{role: "system", content: system}, ...conv],
+            stream: !!stream,
+            max_tokens: safeMaxTokens,
+            temperature: json ? 0 : 0.5,
+            ...(json ? {response_format: {type: "json_object"}} : {})
+          }),
+          signal
+        });
+      }
       catch (e) { if (e.name === "AbortError") throw e; res = null; break; }
       if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
       await new Promise(r => setTimeout(r, 1500 * (i + 1)));
     }
-  }
-  if ((!res || !res.ok) && cfg.url.includes("deepseek.com") && CHATGPT_KEY) {
-    try {
-      res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {Authorization: "Bearer " + CHATGPT_KEY, "content-type": "application/json"},
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [{role: "system", content: system}, ...conv],
-          stream: !!stream,
-          max_tokens: Math.min(cfg.maxTokens || 8192, 16384),
-          temperature: json ? 0 : 0.5,
-          ...(json ? {response_format: {type: "json_object"}} : {})
-        }),
-        signal
-      });
-    } catch (e) { if (e.name === "AbortError") throw e; }
   }
   if (!res || !res.ok) {
     let m = res ? await res.text() : "Request failed"; try { m = JSON.parse(m).error.message } catch {}

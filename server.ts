@@ -2542,17 +2542,18 @@ app.post('/api/llm', verifySiteKey, async (req, res) => {
         : isJson
         ? 0
         : 0.5;
-    const requestedModel = String(req.body?.model || 'deepseek-chat');
-    const isReasoner = Boolean(req.body?.reasoner || requestedModel.includes('reasoner'));
-    const jsonMode = req.body?.jsonMode;
-    const maxTokens = Number(req.body?.max_tokens || req.body?.maxTokens) || (isReasoner ? 32000 : 8192);
+    const requestedModel = String(req.body?.model || 'gpt-4o');
+    const isReasoner = Boolean(req.body?.reasoner);
+    const maxTokens = Math.min(
+      Number(req.body?.max_tokens || req.body?.maxTokens) || 16384,
+      16384
+    );
 
     // Separate system instructions from user/assistant messages
     const systemParts: string[] = [];
     if (topSystem.trim()) systemParts.push(topSystem.trim());
 
     const convMessages: any[] = [];
-    let hasImageInput = false;
     for (const m of rawMessages) {
       if (!m || typeof m !== 'object') continue;
       if (m.role === 'system') {
@@ -2560,87 +2561,19 @@ app.post('/api/llm', verifySiteKey, async (req, res) => {
           systemParts.push(m.content.trim());
         }
       } else if (m.role === 'user' || m.role === 'assistant') {
-        if (Array.isArray(m.content) && m.content.some((p: any) => p?.image || p?.type === 'image_url' || p?.type === 'image')) {
-          hasImageInput = true;
-        }
         convMessages.push(m);
       }
     }
     const systemInstruction = systemParts.join('\n\n').trim();
 
-    // 0. Try DeepSeek API using the deepseek secret value when deepseek model is requested (and no raw images)
-    const deepSeekKey = resolveDeepSeekKey();
-    if (!hasImageInput && deepSeekKey && (requestedModel.startsWith('deepseek') || !requestedModel.startsWith('gpt-'))) {
-      try {
-        const dsMessages: any[] = [];
-        if (systemInstruction) {
-          dsMessages.push({ role: 'system', content: systemInstruction });
-        }
-        for (const m of convMessages) {
-          const textContent =
-            typeof m.content === 'string'
-              ? m.content
-              : Array.isArray(m.content)
-              ? m.content.map((p: any) => p?.text || '').join('\n')
-              : '';
-          dsMessages.push({ role: m.role, content: textContent });
-        }
-
-        const dsModel = requestedModel.startsWith('deepseek') ? requestedModel : 'deepseek-chat';
-        const dsBody: Record<string, any> = {
-          model: dsModel,
-          messages: dsMessages,
-          stream: Boolean(stream),
-          max_tokens: maxTokens,
-          ...(isReasoner ? {} : { temperature }),
-          ...(isJson && jsonMode !== false && !isReasoner ? { response_format: { type: 'json_object' } } : {}),
-        };
-
-        const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${deepSeekKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(dsBody),
-        });
-
-        if (dsRes.ok) {
-          if (stream && dsRes.body) {
-            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-            res.setHeader('Cache-Control', 'no-cache, no-transform');
-            res.setHeader('Connection', 'keep-alive');
-            const reader = dsRes.body.getReader();
-            const decoder = new TextDecoder();
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              res.write(decoder.decode(value, { stream: true }));
-            }
-            return res.end();
-          } else {
-            const dsJson: any = await dsRes.json();
-            const content = dsJson?.choices?.[0]?.message?.content || '';
-            if (content) {
-              return res.json(dsJson);
-            }
-          }
-        } else {
-          console.warn(`DeepSeek API returned ${dsRes.status}, falling back to Gemini/OpenAI.`);
-        }
-      } catch (dsErr: any) {
-        console.warn('DeepSeek /api/llm fallback:', dsErr?.message || dsErr);
-      }
-    }
-
-    // 1. Try OpenAI with the chatgpt secret value (for gpt-4o vision OCR and as primary/fallback for chat & grading)
+    // 1. Primary: Use OpenAI with the chatgpt secret value (for gpt-4o / gpt-4o-mini vision OCR, chat & grading)
     const clientBearer = String(
       req.headers['x-site-key'] ||
         (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '') ||
         ''
     ).trim();
     const openAiKey = resolveOpenAiKey(clientBearer);
-    if (isDirectOpenAiApiKey(openAiKey) && openAiKey !== deepSeekKey) {
+    if (isDirectOpenAiApiKey(openAiKey)) {
       const openaiClient = new OpenAI({ apiKey: openAiKey });
       try {
         const openAiMessages: any[] = [];

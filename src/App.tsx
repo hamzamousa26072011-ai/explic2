@@ -315,6 +315,12 @@ export default function App() {
         unsubRequests = subscribeToRealFriendRequests(user.uid, (reqs) => {
           setIncomingRequests(reqs.filter((r) => !isTestSubject(r.fromName)));
         });
+      } else {
+        if (unsubRequests) {
+          unsubRequests();
+          unsubRequests = null;
+        }
+        setIncomingRequests([]);
       }
     });
 

@@ -18,9 +18,9 @@ const CHATGPT_KEY = [
   .split('')
   .reverse()
   .join('');
-const DEEPSEEK = {
-  url: 'https://api.deepseek.com/chat/completions',
-  key: '0343f75a212fd848256480d456260722-ks'.split('').reverse().join(''),
+const OPENAI = {
+  url: 'https://api.openai.com/v1/chat/completions',
+  key: CHATGPT_KEY,
 };
 
 interface LlmEndpointConfig {
@@ -39,19 +39,23 @@ const CONFIG: {
   gradeFallback: LlmEndpointConfig;
   ocr: { mode: 'tesseract' | 'vision'; url: string; key: string; model: string };
 } = {
-  chat: { ...DEEPSEEK, model: 'deepseek-chat', maxTokens: 8192 }, // fast replies
+  chat: { ...OPENAI, model: 'gpt-4o-mini', maxTokens: 4096 }, // fast replies using chatgpt secret
   grade: {
-    ...DEEPSEEK,
-    model: 'deepseek-reasoner',
-    maxTokens: 32000,
-    reasoner: true,
-    jsonMode: false,
-  }, // thinking model = most accurate marking
-  gradeFallback: { ...DEEPSEEK, model: 'deepseek-chat', maxTokens: 8192 }, // used automatically if the line above is rejected
+    ...OPENAI,
+    model: 'gpt-4o',
+    maxTokens: 16384,
+    reasoner: false,
+    jsonMode: true,
+  }, // accurate marking using chatgpt secret
+  gradeFallback: {
+    ...OPENAI,
+    model: 'gpt-4o-mini',
+    maxTokens: 16384,
+    jsonMode: true,
+  }, // fallback using chatgpt secret
   ocr: {
     mode: 'vision',
-    url: 'https://api.openai.com/v1/chat/completions',
-    key: CHATGPT_KEY,
+    ...OPENAI,
     model: 'gpt-4o',
   },
   // To go back to free in-browser OCR instead: ocr: {mode: "tesseract"}
@@ -194,26 +198,27 @@ async function llm({
           ),
   }));
 
+  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 16384);
   const body = A
     ? { model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream }
     : {
         model: cfg.model,
         messages: [{ role: 'system', content: system }, ...conv],
         stream: !!stream,
-        ...(cfg.maxTokens ? { max_tokens: cfg.maxTokens } : {}),
+        max_tokens: safeMaxTokens,
         ...(cfg.reasoner ? {} : { temperature: json ? 0 : 0.5 }),
         ...(json && cfg.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
       };
 
-  // Call backend /api/llm (which uses the server's `chatgpt` / `deepseek` secret value)
-  // and fall back to direct cfg.url or OpenAI chatgpt key if running standalone
+  // Call backend /api/llm (which uses the server's `chatgpt` secret value)
+  // and fall back to direct OpenAI API with CHATGPT_KEY if running standalone
   let res: Response | null = null;
   try {
     res = await fetch('/api/llm', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + cfg.key,
+        Authorization: 'Bearer ' + CHATGPT_KEY,
         'x-site-key': CHATGPT_KEY,
       },
       body: JSON.stringify({
@@ -222,7 +227,7 @@ async function llm({
         json: !!json,
         reasoner: !!cfg.reasoner,
         jsonMode: cfg.jsonMode,
-        maxTokens: cfg.maxTokens,
+        maxTokens: safeMaxTokens,
       }),
       signal,
     });
@@ -232,25 +237,25 @@ async function llm({
   }
 
   if (!res || !res.ok) {
-    const url = cfg.url;
-    const headers: Record<string, string> = A
-      ? {
-          'x-api-key': cfg.key,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'content-type': 'application/json',
-        }
-      : {
-          Authorization: 'Bearer ' + cfg.key,
-          'content-type': 'application/json',
-        };
+    const url = 'https://api.openai.com/v1/chat/completions';
+    const headers: Record<string, string> = {
+      Authorization: 'Bearer ' + CHATGPT_KEY,
+      'content-type': 'application/json',
+    };
 
     for (let i = 0; i < 3; i++) {
       try {
         res = await fetch(url, {
           method: 'POST',
           headers,
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            model: cfg.model.startsWith('gpt-') ? cfg.model : 'gpt-4o',
+            messages: [{ role: 'system', content: system }, ...conv],
+            stream: !!stream,
+            max_tokens: safeMaxTokens,
+            temperature: json ? 0 : 0.5,
+            ...(json ? { response_format: { type: 'json_object' } } : {}),
+          }),
           signal,
         });
       } catch (e: any) {
@@ -260,30 +265,6 @@ async function llm({
       }
       if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
       await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
-    }
-  }
-
-  // If DeepSeek direct call failed (e.g. 402 Insufficient Balance on static hosting), fall back to OpenAI with CHATGPT_KEY
-  if ((!res || !res.ok) && cfg.url.includes('deepseek.com') && CHATGPT_KEY) {
-    try {
-      res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: 'Bearer ' + CHATGPT_KEY,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o',
-          messages: [{ role: 'system', content: system }, ...conv],
-          stream: !!stream,
-          max_tokens: Math.min(cfg.maxTokens || 8192, 16384),
-          temperature: json ? 0 : 0.5,
-          ...(json ? { response_format: { type: 'json_object' } } : {}),
-        }),
-        signal,
-      });
-    } catch (e: any) {
-      if (e?.name === 'AbortError') throw e;
     }
   }
 
@@ -462,9 +443,9 @@ async function ocr(p: { img: string; hint: string }, label: string): Promise<str
     return llm({
       system: OCR_SYS,
       cfg: {
-        url: CONFIG.ocr.url || DEEPSEEK.url,
-        key: CONFIG.ocr.key || DEEPSEEK.key,
-        model: CONFIG.ocr.model || 'deepseek-chat',
+        url: CONFIG.ocr.url || OPENAI.url,
+        key: CONFIG.ocr.key || OPENAI.key,
+        model: CONFIG.ocr.model || 'gpt-4o',
       },
       messages: [
         {
