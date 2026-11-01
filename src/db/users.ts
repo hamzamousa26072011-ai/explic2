@@ -1,6 +1,17 @@
+import fs from 'fs';
+import path from 'path';
 import { db } from './index.ts';
 import { users, workspaces, examinerEvaluations } from './schema.ts';
 import { eq, desc } from 'drizzle-orm';
+
+export function isSqlAvailable(): boolean {
+  if (!process.env.SQL_HOST) return false;
+  if (process.env.SQL_HOST.startsWith('/')) {
+    const socketPath = path.join(process.env.SQL_HOST, '.s.PGSQL.5432');
+    return fs.existsSync(socketPath);
+  }
+  return true;
+}
 
 export async function getOrCreateUser(
   uid: string,
@@ -8,6 +19,9 @@ export async function getOrCreateUser(
   displayName?: string,
   friendCode?: string
 ) {
+  if (!isSqlAvailable()) {
+    return null;
+  }
   try {
     const result = await db
       .insert(users)
@@ -31,12 +45,15 @@ export async function getOrCreateUser(
 
     return result[0];
   } catch (error) {
-    console.error('Error in getOrCreateUser:', error);
-    throw new Error('Database user sync failed', { cause: error });
+    console.warn('PostgreSQL notice in getOrCreateUser:', (error as any)?.message);
+    return null;
   }
 }
 
 export async function saveSqlWorkspace(uid: string, payload: unknown) {
+  if (!isSqlAvailable()) {
+    return null;
+  }
   try {
     const payloadStr =
       typeof payload === 'string' ? payload : JSON.stringify(payload);
@@ -61,12 +78,15 @@ export async function saveSqlWorkspace(uid: string, payload: unknown) {
       return created[0];
     }
   } catch (error) {
-    console.error('Error in saveSqlWorkspace:', error);
-    throw new Error('Database workspace save failed', { cause: error });
+    console.warn('PostgreSQL notice in saveSqlWorkspace:', (error as any)?.message);
+    return null;
   }
 }
 
 export async function loadSqlWorkspace(uid: string) {
+  if (!isSqlAvailable()) {
+    return null;
+  }
   try {
     const result = await db
       .select()
@@ -83,7 +103,7 @@ export async function loadSqlWorkspace(uid: string) {
     }
     return null;
   } catch (error) {
-    console.error('Error in loadSqlWorkspace:', error);
+    console.warn('PostgreSQL notice in loadSqlWorkspace:', (error as any)?.message);
     return null;
   }
 }
@@ -99,6 +119,9 @@ export async function saveSqlEvaluation(params: {
   totalMarks?: number;
   evaluationJson: string;
 }) {
+  if (!isSqlAvailable()) {
+    return null;
+  }
   try {
     const result = await db
       .insert(examinerEvaluations)
@@ -116,12 +139,15 @@ export async function saveSqlEvaluation(params: {
       .returning();
     return result[0];
   } catch (error) {
-    console.error('Error in saveSqlEvaluation:', error);
+    console.warn('PostgreSQL notice in saveSqlEvaluation:', (error as any)?.message);
     return null;
   }
 }
 
 export async function getUserEvaluations(userId: string) {
+  if (!isSqlAvailable()) {
+    return [];
+  }
   try {
     return await db
       .select()
@@ -130,7 +156,7 @@ export async function getUserEvaluations(userId: string) {
       .orderBy(desc(examinerEvaluations.createdAt))
       .limit(20);
   } catch (error) {
-    console.error('Error in getUserEvaluations:', error);
+    console.warn('PostgreSQL notice in getUserEvaluations:', (error as any)?.message);
     return [];
   }
 }

@@ -218,6 +218,39 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
           <span>Continue with Google</span>
         </button>
 
+        {/* 1-Click Quick Sign In with created Firebase account */}
+        <button
+          id="auth-quick-hamza-btn"
+          type="button"
+          onClick={async () => {
+            setErrorMessage(null);
+            setIsLoading(true);
+            try {
+              await onEmailAuth({
+                mode: 'login',
+                email: 'Hamzamousa26072011@gmail.com',
+                password: 'Explic2026!',
+                displayName: 'Hamza Mousa',
+              });
+            } catch (err) {
+              setErrorMessage(
+                err instanceof Error ? err.message : 'Sign-in failed'
+              );
+            } finally {
+              setIsLoading(false);
+            }
+          }}
+          disabled={isLoading || isGoogleLoading}
+          className={`w-full py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+            isLight
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+              : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-950/60'
+          }`}
+        >
+          <UserCheck className="w-4 h-4 text-emerald-500" />
+          <span>1-Click Sign In (Hamza Mousa)</span>
+        </button>
+
         <div className="relative flex items-center justify-center">
           <div className="border-t border-current/10 w-full" />
           <span
@@ -225,7 +258,7 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
               isLight ? 'bg-white' : 'bg-[#111827]'
             } ${mutedText}`}
           >
-            Or with email
+            Or enter details
           </span>
           <div className="border-t border-current/10 w-full" />
         </div>

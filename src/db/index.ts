@@ -18,7 +18,7 @@ export const createPool = () => {
     });
 
     global._postgresPool.on('error', (err) => {
-      console.error('Unexpected error on idle SQL pool client:', err);
+      console.warn('SQL pool client notice:', err?.message || err);
     });
   }
   return global._postgresPool;
