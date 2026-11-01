@@ -50,11 +50,28 @@ export const SCOPES = [
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with ignoreUndefinedProperties: true per specification
+// Initialize Analytics if supported in the browser
+if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
+  import('firebase/analytics')
+    .then(({ getAnalytics, isSupported }) => {
+      isSupported()
+        .then((supported) => {
+          if (supported) {
+            getAnalytics(app);
+          }
+        })
+        .catch(() => {});
+    })
+    .catch(() => {});
+}
+
 export const db = initializeFirestore(
   app,
   { ignoreUndefinedProperties: true },
-  firebaseConfig.firestoreDatabaseId
+  firebaseConfig.firestoreDatabaseId &&
+    firebaseConfig.firestoreDatabaseId !== '(default)'
+    ? firebaseConfig.firestoreDatabaseId
+    : undefined
 );
 
 export const auth = getAuth(app);
@@ -184,43 +201,23 @@ export async function signInWithGoogleWorkspace(
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (err: any) {
     const errMsg = String(err?.code || err?.message || '');
+    if (errMsg.includes('unauthorized-domain')) {
+      const currentHost =
+        typeof window !== 'undefined' ? window.location.hostname : 'explic.online';
+      throw new Error(
+        `Firebase domain authorization required: "${currentHost}" is not yet in Authorized Domains in Firebase Console. Please go to Firebase Console -> Authentication -> Settings -> Authorized domains -> Add domain -> enter "${currentHost}". Meanwhile, sign in or register with email below!`
+      );
+    }
+    if (errMsg.includes('popup-blocked')) {
+      throw new Error(
+        'The Google sign-in popup was blocked by your browser. Please allow popups for explic.online and try again.'
+      );
+    }
     if (
-      errMsg.includes('unauthorized-domain') ||
-      errMsg.includes('operation-not-supported') ||
-      errMsg.includes('popup-blocked') ||
+      errMsg.includes('popup-closed-by-user') ||
       errMsg.includes('cancelled-popup-request')
     ) {
-      const fallbackEmail = 'Hamzamousa26072011@gmail.com';
-      const fallbackCode = generateDeterministicFriendCode(fallbackEmail);
-      const fallbackUid = `google-scholar-${fallbackCode}`;
-      let savedDisplayName = 'Hamza Mousa';
-      try {
-        const existingSession = localStorage.getItem('explic_verified_session');
-        if (existingSession) {
-          const parsed = JSON.parse(existingSession);
-          if (parsed?.displayName) savedDisplayName = parsed.displayName;
-        }
-      } catch {}
-      const fallbackUser = {
-        uid: fallbackUid,
-        email: fallbackEmail,
-        displayName: savedDisplayName,
-        emailVerified: true,
-        isAnonymous: false,
-      } as unknown as User;
-      try {
-        localStorage.setItem(
-          'explic_verified_session',
-          JSON.stringify({
-            uid: fallbackUser.uid,
-            email: fallbackUser.email,
-            displayName: fallbackUser.displayName,
-            friendCode: fallbackCode,
-            verifiedAt: new Date().toISOString(),
-          })
-        );
-      } catch {}
-      return { user: fallbackUser, accessToken: cachedAccessToken };
+      throw new Error('Google Sign-In was closed before completion.');
     }
     throw err;
   } finally {
@@ -257,7 +254,7 @@ export async function signInOrRegisterWithEmail(params: {
           cleanPassword
         );
         if (cleanDisplayName) {
-          await updateProfile(cred.user, { displayName: cleanDisplayName });
+          await updateProfile(cred.user, { displayName: cleanDisplayName }).catch(() => {});
         }
         try {
           await sendEmailVerification(cred.user);
@@ -268,55 +265,94 @@ export async function signInOrRegisterWithEmail(params: {
       } catch (regErr: any) {
         const code = String(regErr?.code || '');
         if (code === 'auth/email-already-in-use') {
-          // If email is already registered in Firebase, attempt sign in with the provided password
-          const loginCred = await signInWithEmailAndPassword(
-            auth,
-            cleanEmail,
-            cleanPassword
-          );
-          if (cleanDisplayName && !loginCred.user.displayName) {
-            await updateProfile(loginCred.user, {
-              displayName: cleanDisplayName,
-            }).catch(() => {});
+          // If email is already registered, sign in directly with the provided password
+          try {
+            const loginCred = await signInWithEmailAndPassword(
+              auth,
+              cleanEmail,
+              cleanPassword
+            );
+            if (cleanDisplayName && !loginCred.user.displayName) {
+              await updateProfile(loginCred.user, {
+                displayName: cleanDisplayName,
+              }).catch(() => {});
+            }
+            firebaseUser = loginCred.user;
+          } catch {
+            throw new Error(
+              'This email is already registered with a different password. Please check your password.'
+            );
           }
-          firebaseUser = loginCred.user;
         } else {
           throw regErr;
         }
       }
     } else {
-      const cred = await signInWithEmailAndPassword(
-        auth,
-        cleanEmail,
-        cleanPassword
-      );
-      firebaseUser = cred.user;
+      // mode === 'login'
+      try {
+        const cred = await signInWithEmailAndPassword(
+          auth,
+          cleanEmail,
+          cleanPassword
+        );
+        firebaseUser = cred.user;
+      } catch (loginErr: any) {
+        const code = String(loginErr?.code || '');
+        if (
+          code === 'auth/user-not-found' ||
+          code === 'auth/invalid-credential'
+        ) {
+          // If user doesn't exist yet on explic-718f0, auto-register seamlessly!
+          try {
+            const newCred = await createUserWithEmailAndPassword(
+              auth,
+              cleanEmail,
+              cleanPassword
+            );
+            const resolvedName = cleanDisplayName || cleanEmail.split('@')[0];
+            await updateProfile(newCred.user, { displayName: resolvedName }).catch(() => {});
+            try {
+              await sendEmailVerification(newCred.user);
+            } catch {}
+            firebaseUser = newCred.user;
+          } catch (createErr: any) {
+            const createCode = String(createErr?.code || '');
+            if (createCode === 'auth/email-already-in-use') {
+              throw new Error('Incorrect password for this email account.');
+            } else {
+              throw loginErr;
+            }
+          }
+        } else {
+          throw loginErr;
+        }
+      }
     }
   } catch (err: any) {
+    if (err instanceof Error && !err.message.includes('Firebase:')) {
+      throw err;
+    }
     const code = String(err?.code || err?.message || '');
     if (
       code.includes('auth/wrong-password') ||
       code.includes('auth/invalid-credential')
     ) {
       throw new Error(
-        params.mode === 'login'
-          ? 'Incorrect email or password. If you do not have an account yet, switch to Sign Up.'
-          : 'This email is already registered with a different password.'
-      );
-    }
-    if (code.includes('auth/user-not-found')) {
-      throw new Error(
-        'No account found with this email. Please switch to Sign Up to create your account.'
+        'Incorrect password for this email account. Please check your credentials.'
       );
     }
     if (code.includes('auth/invalid-email')) {
       throw new Error('Please enter a valid email address.');
     }
     if (code.includes('auth/weak-password')) {
-      throw new Error('Password should be at least 6 characters.');
+      throw new Error('Password must be at least 6 characters.');
     }
-    // If Firebase Email/Password provider is not enabled in Firebase Console or domain is restricted,
-    // fall back to backend/local account authentication below so email Sign Up / Sign In works seamlessly.
+    if (code.includes('auth/too-many-requests')) {
+      throw new Error(
+        'Too many failed attempts. Please wait a moment and try again.'
+      );
+    }
+    throw new Error(err?.message || 'Authentication failed.');
   } finally {
     isSigningIn = false;
   }

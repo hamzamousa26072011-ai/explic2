@@ -337,8 +337,37 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
           </div>
 
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs font-medium">
-              {errorMessage}
+            <div
+              className={`p-3.5 rounded-xl border text-xs font-medium ${
+                errorMessage.includes('Authorized domains') ||
+                errorMessage.includes('authorization required')
+                  ? isLight
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-amber-950/40 border-amber-500/30 text-amber-200'
+                  : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+              }`}
+            >
+              {errorMessage.includes('Authorized domains') ||
+              errorMessage.includes('authorization required') ? (
+                <div className="space-y-1.5">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <span>Firebase Setup: Authorize Custom Domain</span>
+                  </div>
+                  <p className="leading-relaxed text-[11px]">
+                    To sign in with Google directly on <strong>explic.online</strong>:
+                  </p>
+                  <ol className="list-decimal pl-4 space-y-0.5 text-[11px]">
+                    <li>Open <strong>Firebase Console</strong> &rarr; Project <strong>explic-718f0</strong></li>
+                    <li>Navigate to <strong>Authentication</strong> &rarr; <strong>Settings</strong> &rarr; <strong>Authorized domains</strong></li>
+                    <li>Click <strong>Add domain</strong>, type <code className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono">explic.online</code>, and Save.</li>
+                  </ol>
+                  <p className="text-[11px] pt-1 opacity-90">
+                    &rarr; You can sign in or create an account with <strong>Email &amp; Password</strong> below right now!
+                  </p>
+                </div>
+              ) : (
+                errorMessage
+              )}
             </div>
           )}
 
