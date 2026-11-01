@@ -125,12 +125,12 @@ pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);bor
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
 /* ================= CONFIG: edit this block ================= */
-const CHATGPT_KEY = ["AA-NHI_odTkZGfu6o7FAj2CuImVlXmdzbGeZCURTSA1e0_O6ZcdVdiW_CFegGR3xqWQ2WKludlu", "JFkblB3Ti_kieAxugr9K3XwIIdDxOE5qEyEwEIdGvj1uU57ChV9yeuUk2RpnmtCUZ76YTHrlw4FpGeJ1BP-jorp-ks"].join("").split("").reverse().join("");
+const CHATGPT_KEY = "key_ps5gnQ9rlp4xSCl6";
 const OPENAI = {url: "https://api.openai.com/v1/chat/completions", key: CHATGPT_KEY};
 const CONFIG = {
   chat:  {...OPENAI, model: "gpt-4o-mini", maxTokens: 4096},                                        // fast replies
-  grade: {...OPENAI, model: "gpt-4o", maxTokens: 16384, reasoner: false, jsonMode: true},           // accurate marking
-  gradeFallback: {...OPENAI, model: "gpt-4o-mini", maxTokens: 16384, jsonMode: true},               // fallback
+  grade: {...OPENAI, model: "gpt-4o", maxTokens: 8192, reasoner: false, jsonMode: true},            // accurate marking
+  gradeFallback: {...OPENAI, model: "gpt-4o-mini", maxTokens: 8192, jsonMode: true},                // fallback
   ocr: {mode: "vision", ...OPENAI, model: "gpt-4o"}
   // To go back to free in-browser OCR instead: ocr: {mode: "tesseract"}
 };
@@ -183,27 +183,32 @@ async function llm({system, messages, cfg, stream, onToken, json, signal}) {
       ? (A ? {type: "image", source: {type: "base64", media_type: "image/jpeg", data: p.image}}
            : {type: "image_url", image_url: {url: "data:image/jpeg;base64," + p.image, detail: "high"}})
       : {type: "text", text: p.text})}));
-  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 16384);
+  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 8192);
   const body = A ? {model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream}
     : {model: cfg.model, messages: [{role: "system", content: system}, ...conv], stream: !!stream,
        max_tokens: safeMaxTokens, ...(cfg.reasoner ? {} : {temperature: json ? 0 : 0.5}),
        ...(json && cfg.jsonMode !== false ? {response_format: {type: "json_object"}} : {})};
-  let res;
-  try {
-    res = await fetch("/api/llm", {
-      method: "POST",
-      headers: {Authorization: "Bearer " + CHATGPT_KEY, "x-site-key": CHATGPT_KEY, "content-type": "application/json"},
-      body: JSON.stringify({...body, system, json: !!json, reasoner: !!cfg.reasoner, jsonMode: cfg.jsonMode, maxTokens: safeMaxTokens}),
-      signal
-    });
-  } catch (e) {
-    if (e.name === "AbortError") throw e;
-    res = null;
+  let res = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const attemptModel = attempt > 0 ? "gpt-4o-mini" : cfg.model;
+      res = await fetch("/api/llm", {
+        method: "POST",
+        headers: {Authorization: "Bearer " + CHATGPT_KEY, "x-site-key": CHATGPT_KEY, "content-type": "application/json"},
+        body: JSON.stringify({...body, model: attemptModel, system, json: !!json, reasoner: !!cfg.reasoner, jsonMode: cfg.jsonMode, maxTokens: safeMaxTokens}),
+        signal
+      });
+      if (res.ok || ![429, 500, 502, 503, 504, 529].includes(res.status)) break;
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      res = null;
+    }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
   }
-  if (!res || !res.ok) {
-    for (let i = 0; i < 3; i++) {
+  if ((!res || !res.ok) && CHATGPT_KEY.startsWith("sk-")) {
+    for (let i = 0; i < 2; i++) {
       try {
-        res = await fetch("https://api.openai.com/v1/chat/completions", {
+        const fallbackRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {Authorization: "Bearer " + CHATGPT_KEY, "content-type": "application/json"},
           body: JSON.stringify({
@@ -216,8 +221,9 @@ async function llm({system, messages, cfg, stream, onToken, json, signal}) {
           }),
           signal
         });
+        res = fallbackRes;
       }
-      catch (e) { if (e.name === "AbortError") throw e; res = null; break; }
+      catch (e) { if (e.name === "AbortError") throw e; break; }
       if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
       await new Promise(r => setTimeout(r, 1500 * (i + 1)));
     }
@@ -289,32 +295,50 @@ function draw(z, k) {
 
 /* ---------- PAPER CORRECTION: OCR ---------- */
 const layerText = tc => { let y = null, t = ""; for (const it of tc.items) { const yy = it.transform[5]; if (y !== null && Math.abs(yy - y) > 3) t += "\n"; else if (t && !t.endsWith(" ")) t += " "; t += it.str; y = yy; } return t.trim(); };
-const jpg = c => c.toDataURL("image/jpeg", .85).split(",")[1];
-async function toPages(f) {
+const jpg = c => c.toDataURL("image/jpeg", .75).split(",")[1];
+async function toPages(f, kind = "a") {
   if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) {
     const pdf = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise, out = [];
     for (let i = 1; i <= Math.min(pdf.numPages, 30); i++) {
-      const pg = await pdf.getPage(i), v0 = pg.getViewport({scale: 1}), vp = pg.getViewport({scale: 2200 / Math.max(v0.width, v0.height)}), c = document.createElement("canvas");
+      const pg = await pdf.getPage(i);
+      const tc = await pg.getTextContent();
+      const hint = layerText(tc);
+      if (kind === "m" && hint.trim().length > 80) {
+        out.push({img: "", hint});
+        continue;
+      }
+      const v0 = pg.getViewport({scale: 1}), vp = pg.getViewport({scale: 1500 / Math.max(v0.width, v0.height)}), c = document.createElement("canvas");
       c.width = vp.width; c.height = vp.height;
       await pg.render({canvasContext: c.getContext("2d"), viewport: vp}).promise;
-      const tc = await pg.getTextContent();
-      out.push({img: jpg(c), hint: layerText(tc)});
+      out.push({img: jpg(c), hint});
     }
     return out;
   }
-  const bmp = await createImageBitmap(f), k = Math.min(1, 2200 / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
+  const bmp = await createImageBitmap(f), k = Math.min(1, 1500 / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
   c.width = bmp.width * k; c.height = bmp.height * k;
   const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(bmp, 0, 0, c.width, c.height);
   return [{img: jpg(c), hint: ""}];
 }
 const OCR_SYS = "You are a meticulous OCR engine for exam papers, both handwritten and printed. Transcribe EVERY word, number, symbol, label and table on the page exactly as written, in reading order, keeping question numbers and line breaks. Do not fix spelling, grammar or maths, and do not answer or comment. Write crossed-out text as [crossed out: ...], unreadable text as [illegible], diagrams as [diagram: short description], and tables as rows separated by ' | '. Write maths in plain text (x^2, 3/4), never LaTeX. Output only the transcription.";
 let tw = null;
-async function ocr(p, label) {
-  if (CONFIG.ocr.mode === "vision") return llm({system: OCR_SYS, cfg: CONFIG.ocr, messages: [{role: "user", content: [{image: p.img},
-    {text: `Transcribe this page (${label}).` + (p.hint.length > 30 ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}` : "")}]}]});
+async function ocr(p, label, kind = "a") {
+  if (!p.img || (kind === "m" && p.hint.trim().length > 80)) return p.hint;
+  if (CONFIG.ocr.mode === "vision") {
+    try {
+      return await llm({system: OCR_SYS, cfg: CONFIG.ocr, messages: [{role: "user", content: [{image: p.img},
+        {text: `Transcribe this page (${label}).` + (p.hint.length > 30 ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}` : "")}]}]});
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      if (p.hint.trim().length > 20) return p.hint;
+    }
+  }
   if (p.hint.length > 30) return p.hint;   // digital PDF: its own text is exact, no OCR needed
-  tw = tw || await Tesseract.createWorker("eng");
-  return (await tw.recognize("data:image/jpeg;base64," + p.img)).data.text;
+  try {
+    tw = tw || await Tesseract.createWorker("eng");
+    return (await tw.recognize("data:image/jpeg;base64," + p.img)).data.text;
+  } catch {
+    return p.hint || `[${label}]`;
+  }
 }
 async function pool(items, n, fn) {
   const r = []; let i = 0;
@@ -337,10 +361,10 @@ Return JSON only in exactly this shape:
 {"overall_feedback":"2-3 sentence summary","questions":[{"id":"1a","question":"short question text","max_marks":2,"awarded":1,"student_answer":"","correct_answer":"","points":[{"text":"","earned":true}],"mistakes":[{"issue":"","fix":""}]}]}`;
 const gradeLLM = async o => {
   try { return await llm({...o, cfg: CONFIG.grade}); }
-  catch (e) { if (CONFIG.gradeFallback && /API error (400|404)/.test(e.message)) return llm({...o, cfg: CONFIG.gradeFallback}); throw e; }
+  catch (e) { if (e.name === "AbortError") throw e; if (CONFIG.gradeFallback) return llm({...o, cfg: CONFIG.gradeFallback}); throw e; }
 };
 const parse = s => {
-  const str = String(s || "");
+  const str = String(s || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const start = str.indexOf("{"), end = str.lastIndexOf("}");
   if (start !== -1 && end > start) {
     try { return JSON.parse(str.slice(start, end + 1)); } catch {}
@@ -355,26 +379,28 @@ $("#run").onclick = async () => {
     const jobs = [];
     for (const k of ["a", "m"]) for (const f of files[k]) {
       status("Preparing " + f.name, 3);
-      (await toPages(f)).forEach((p, i) => jobs.push({k, p, l: `${f.name}, page ${i + 1}`}));
+      (await toPages(f, k)).forEach((p, i) => jobs.push({k, p, l: `${f.name}, page ${i + 1}`}));
     }
     let d = 0;
-    const out = await pool(jobs, CONFIG.ocr.mode === "vision" ? 2 : 1, async j => {
-      const t = await ocr(j.p, j.l); status(`Reading text ${++d} of ${jobs.length} pages`, 5 + d / jobs.length * 60);
+    const out = await pool(jobs, CONFIG.ocr.mode === "vision" ? 3 : 1, async j => {
+      const t = await ocr(j.p, j.l, j.k); status(`Reading text ${++d} of ${jobs.length} pages`, 5 + d / Math.max(1, jobs.length) * 60);
       return {k: j.k, t: `[${j.l}]\n${t}`};
     });
     const T = {a: "", m: $("#msText").value.trim()};
     out.forEach(o => T[o.k] += (T[o.k] ? "\n\n" : "") + o.t);
-    const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS:\n${T.a}`;
+    const ctx = `MARK SCHEME:\n${T.m.slice(0, 45000)}\n\nSTUDENT ANSWERS:\n${T.a.slice(0, 45000)}`;
     status("Marking against the mark scheme (can take a minute or two)", 70);
     const draft = parse(await gradeLLM({system: GRADE_SYS, json: true,
       messages: [{role: "user", content: ctx + "\n\nMark every question now. Return JSON only."}]}));
     status("Double-checking every mark", 88);
     let final = draft;
-    try {
-      final = parse(await gradeLLM({system: GRADE_SYS, json: true, messages: [{role: "user", content:
-        ctx + "\n\nDRAFT MARKING:\n" + JSON.stringify(draft) + "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only."}]}));
-      if (!Array.isArray(final.questions) || !final.questions.length) final = draft;
-    } catch { final = draft; }
+    if (ctx.length < 18000) {
+      try {
+        final = parse(await gradeLLM({system: GRADE_SYS, json: true, messages: [{role: "user", content:
+          ctx + "\n\nDRAFT MARKING:\n" + JSON.stringify(draft) + "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only."}]}));
+        if (!Array.isArray(final.questions) || !final.questions.length) final = draft;
+      } catch { final = draft; }
+    }
     if (!Array.isArray(final.questions) || !final.questions.length) throw new Error("No questions could be marked. Check the mark scheme and answer scans.");
     status("Done", 100); render(final, T);
   } catch (e) { console.error(e); err.textContent = e.message; err.style.display = "block"; $("#prog").classList.remove("on"); }

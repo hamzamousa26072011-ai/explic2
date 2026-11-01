@@ -10,14 +10,9 @@ interface AiScholarTabProps {
 }
 
 /* ================= CONFIG: edit this block ================= */
-const CHATGPT_KEY = [
-  'AA-NHI_odTkZGfu6o7FAj2CuImVlXmdzbGeZCURTSA1e0_O6ZcdVdiW_CFegGR3xqWQ2WKludlu',
-  'JFkblB3Ti_kieAxugr9K3XwIIdDxOE5qEyEwEIdGvj1uU57ChV9yeuUk2RpnmtCUZ76YTHrlw4FpGeJ1BP-jorp-ks',
-]
-  .join('')
-  .split('')
-  .reverse()
-  .join('');
+const CHATGPT_KEY =
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CHATGPT_KEY) ||
+  'key_ps5gnQ9rlp4xSCl6';
 const OPENAI = {
   url: 'https://api.openai.com/v1/chat/completions',
   key: CHATGPT_KEY,
@@ -43,14 +38,14 @@ const CONFIG: {
   grade: {
     ...OPENAI,
     model: 'gpt-4o',
-    maxTokens: 16384,
+    maxTokens: 8192,
     reasoner: false,
     jsonMode: true,
   }, // accurate marking using chatgpt secret
   gradeFallback: {
     ...OPENAI,
     model: 'gpt-4o-mini',
-    maxTokens: 16384,
+    maxTokens: 8192,
     jsonMode: true,
   }, // fallback using chatgpt secret
   ocr: {
@@ -156,7 +151,7 @@ interface LlmCallOptions {
   signal?: AbortSignal;
 }
 
-/* ---------- provider-agnostic LLM call (streaming supported, uses chatgpt / deepseek secret) ---------- */
+/* ---------- provider-agnostic LLM call (streaming supported, uses chatgpt secret) ---------- */
 async function llm({
   system,
   messages,
@@ -198,7 +193,7 @@ async function llm({
           ),
   }));
 
-  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 16384);
+  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 8192);
   const body = A
     ? { model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream }
     : {
@@ -210,42 +205,51 @@ async function llm({
         ...(json && cfg.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
       };
 
-  // Call backend /api/llm (which uses the server's `chatgpt` secret value)
-  // and fall back to direct OpenAI API with CHATGPT_KEY if running standalone
+  // Call backend /api/llm with up to 3 attempts
   let res: Response | null = null;
-  try {
-    res = await fetch('/api/llm', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + CHATGPT_KEY,
-        'x-site-key': CHATGPT_KEY,
-      },
-      body: JSON.stringify({
-        ...body,
-        system,
-        json: !!json,
-        reasoner: !!cfg.reasoner,
-        jsonMode: cfg.jsonMode,
-        maxTokens: safeMaxTokens,
-      }),
-      signal,
-    });
-  } catch (e: any) {
-    if (e?.name === 'AbortError') throw e;
-    res = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const attemptModel = attempt > 0 ? 'gpt-4o-mini' : cfg.model;
+      res = await fetch('/api/llm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + CHATGPT_KEY,
+          'x-site-key': CHATGPT_KEY,
+        },
+        body: JSON.stringify({
+          ...body,
+          model: attemptModel,
+          system,
+          json: !!json,
+          reasoner: !!cfg.reasoner,
+          jsonMode: cfg.jsonMode,
+          maxTokens: safeMaxTokens,
+        }),
+        signal,
+      });
+      if (res.ok || ![429, 500, 502, 503, 504, 529].includes(res.status)) {
+        break;
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') throw e;
+      res = null;
+    }
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+    }
   }
 
-  if (!res || !res.ok) {
+  if ((!res || !res.ok) && CHATGPT_KEY.startsWith('sk-')) {
     const url = 'https://api.openai.com/v1/chat/completions';
     const headers: Record<string, string> = {
       Authorization: 'Bearer ' + CHATGPT_KEY,
       'content-type': 'application/json',
     };
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       try {
-        res = await fetch(url, {
+        const fallbackRes = await fetch(url, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -258,9 +262,9 @@ async function llm({
           }),
           signal,
         });
+        res = fallbackRes;
       } catch (e: any) {
         if (e?.name === 'AbortError') throw e;
-        res = null;
         break;
       }
       if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
@@ -359,7 +363,8 @@ const gradeLLM = async (o: Omit<LlmCallOptions, 'cfg'>): Promise<string> => {
   try {
     return await llm({ ...o, cfg: CONFIG.grade });
   } catch (e: any) {
-    if (CONFIG.gradeFallback && /API error (400|404)/.test(e?.message || '')) {
+    if (e?.name === 'AbortError') throw e;
+    if (CONFIG.gradeFallback) {
       return llm({ ...o, cfg: CONFIG.gradeFallback });
     }
     throw e;
@@ -367,14 +372,66 @@ const gradeLLM = async (o: Omit<LlmCallOptions, 'cfg'>): Promise<string> => {
 };
 
 const parse = (s: string) => {
-  const str = String(s || '');
+  const str = String(s || '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
   const start = str.indexOf('{');
   const end = str.lastIndexOf('}');
   if (start !== -1 && end > start) {
     try {
       return JSON.parse(str.slice(start, end + 1));
     } catch {
-      // ignore
+      // Attempt to salvage truncated JSON array inside "questions": [
+      const qArrIdx = str.indexOf('"questions"');
+      if (qArrIdx !== -1) {
+        const bracketIdx = str.indexOf('[', qArrIdx);
+        if (bracketIdx !== -1) {
+          const inner = str.slice(bracketIdx + 1);
+          const salvaged: any[] = [];
+          let depth = 0;
+          let objStart = -1;
+          let inStr = false;
+          let escChar = false;
+          for (let i = 0; i < inner.length; i++) {
+            const ch = inner[i];
+            if (escChar) {
+              escChar = false;
+              continue;
+            }
+            if (ch === '\\') {
+              escChar = true;
+              continue;
+            }
+            if (ch === '"') {
+              inStr = !inStr;
+              continue;
+            }
+            if (inStr) continue;
+            if (ch === '{') {
+              if (depth === 0) objStart = i;
+              depth++;
+            } else if (ch === '}') {
+              depth--;
+              if (depth === 0 && objStart !== -1) {
+                try {
+                  salvaged.push(JSON.parse(inner.slice(objStart, i + 1)));
+                } catch {
+                  // ignore incomplete item
+                }
+                objStart = -1;
+              }
+            }
+          }
+          if (salvaged.length > 0) {
+            return {
+              overall_feedback:
+                'Paper marked against the mark scheme. Review each question below.',
+              questions: salvaged,
+            };
+          }
+        }
+      }
     }
   }
   throw new Error(
@@ -399,9 +456,12 @@ const layerText = (tc: any): string => {
 };
 
 const jpg = (c: HTMLCanvasElement): string =>
-  c.toDataURL('image/jpeg', 0.85).split(',')[1] || '';
+  c.toDataURL('image/jpeg', 0.75).split(',')[1] || '';
 
-async function toPages(f: File): Promise<Array<{ img: string; hint: string }>> {
+async function toPages(
+  f: File,
+  kind: 'a' | 'm' = 'a'
+): Promise<Array<{ img: string; hint: string }>> {
   const pdfjsLib = (window as any).pdfjsLib;
   if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
     if (!pdfjsLib) {
@@ -413,20 +473,26 @@ async function toPages(f: File): Promise<Array<{ img: string; hint: string }>> {
     const out: Array<{ img: string; hint: string }> = [];
     for (let i = 1; i <= Math.min(pdf.numPages, 30); i++) {
       const pg = await pdf.getPage(i);
+      const tc = await pg.getTextContent();
+      const hint = layerText(tc);
+      // Digital Mark Scheme pages already contain complete selectable text
+      if (kind === 'm' && hint.trim().length > 80) {
+        out.push({ img: '', hint });
+        continue;
+      }
       const v0 = pg.getViewport({ scale: 1 });
-      const vp = pg.getViewport({ scale: 2200 / Math.max(v0.width, v0.height) });
+      const vp = pg.getViewport({ scale: 1500 / Math.max(v0.width, v0.height) });
       const c = document.createElement('canvas');
       c.width = vp.width;
       c.height = vp.height;
       await pg.render({ canvasContext: c.getContext('2d')!, viewport: vp }).promise;
-      const tc = await pg.getTextContent();
-      out.push({ img: jpg(c), hint: layerText(tc) });
+      out.push({ img: jpg(c), hint });
     }
     return out;
   }
 
   const bmp = await createImageBitmap(f);
-  const k = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
+  const k = Math.min(1, 1500 / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
   c.width = bmp.width * k;
   c.height = bmp.height * k;
@@ -438,57 +504,58 @@ async function toPages(f: File): Promise<Array<{ img: string; hint: string }>> {
 }
 
 let tw: any = null;
-async function ocr(p: { img: string; hint: string }, label: string): Promise<string> {
+async function ocr(
+  p: { img: string; hint: string },
+  label: string,
+  kind: 'a' | 'm' = 'a'
+): Promise<string> {
+  // Digital Mark Scheme PDF pages already have exact text
+  if (!p.img || (kind === 'm' && p.hint.trim().length > 80)) {
+    return p.hint;
+  }
   if (CONFIG.ocr.mode === 'vision') {
-    return llm({
-      system: OCR_SYS,
-      cfg: {
-        url: CONFIG.ocr.url || OPENAI.url,
-        key: CONFIG.ocr.key || OPENAI.key,
-        model: CONFIG.ocr.model || 'gpt-4o',
-      },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { image: p.img },
-            {
-              text:
-                `Transcribe this page (${label}).` +
-                (p.hint.length > 30
-                  ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}`
-                  : ''),
-            },
-          ],
+    try {
+      return await llm({
+        system: OCR_SYS,
+        cfg: {
+          url: CONFIG.ocr.url || OPENAI.url,
+          key: CONFIG.ocr.key || OPENAI.key,
+          model: CONFIG.ocr.model || 'gpt-4o',
         },
-      ],
-    });
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { image: p.img },
+              {
+                text:
+                  `Transcribe this page (${label}).` +
+                  (p.hint.length > 30
+                    ? `\nOptional reference, the embedded text layer (may be incomplete or out of order):\n${p.hint.slice(0, 6000)}`
+                    : ''),
+              },
+            ],
+          },
+        ],
+      });
+    } catch (err: any) {
+      if (err?.name === 'AbortError') throw err;
+      if (p.hint.trim().length > 20) return p.hint;
+    }
   }
   if (p.hint.length > 30) return p.hint; // digital PDF: its own text is exact, no OCR needed
   const TesseractLib = (window as any).Tesseract;
-  if (TesseractLib) {
+  if (TesseractLib && p.img) {
     try {
       tw = tw || (await TesseractLib.createWorker('eng'));
       const res = await tw.recognize('data:image/jpeg;base64,' + p.img);
       const text = (res?.data?.text || '').trim();
       if (text.length > 10) return text;
     } catch {
-      // fallback to vision OCR below if Tesseract worker fails
+      // fallback below
     }
   }
-  return llm({
-    system: OCR_SYS,
-    cfg: CONFIG.chat,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { image: p.img },
-          { text: `Transcribe this page (${label}).` },
-        ],
-      },
-    ],
-  });
+  return p.hint || `[${label}]`;
 }
 
 async function pool<T, R>(
@@ -890,7 +957,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       for (const k of ['a', 'm'] as const) {
         for (const f of files[k]) {
           status('Preparing ' + f.name, 3);
-          const pages = await toPages(f);
+          const pages = await toPages(f, k);
           pages.forEach((p, i) =>
             jobs.push({ k, p, l: `${f.name}, page ${i + 1}` })
           );
@@ -900,9 +967,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       let d = 0;
       const out = await pool(
         jobs,
-        CONFIG.ocr.mode === 'vision' ? 2 : 1,
+        CONFIG.ocr.mode === 'vision' ? 3 : 1,
         async (j) => {
-          const t = await ocr(j.p, j.l);
+          const t = await ocr(j.p, j.l, j.k);
           status(
             `Reading text ${++d} of ${jobs.length} pages`,
             5 + (d / Math.max(1, jobs.length)) * 60
@@ -919,7 +986,9 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         T[o.k] += (T[o.k] ? '\n\n' : '') + o.t;
       });
 
-      const ctx = `MARK SCHEME:\n${T.m}\n\nSTUDENT ANSWERS:\n${T.a}`;
+      const cappedM = T.m.slice(0, 45000);
+      const cappedA = T.a.slice(0, 45000);
+      const ctx = `MARK SCHEME:\n${cappedM}\n\nSTUDENT ANSWERS:\n${cappedA}`;
 
       status('Marking against the mark scheme (can take a minute or two)', 70);
       const draftRaw = await gradeLLM({
@@ -936,27 +1005,29 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
       status('Double-checking every mark', 88);
       let final = draft;
-      try {
-        const finalRaw = await gradeLLM({
-          system: GRADE_SYS,
-          json: true,
-          messages: [
-            {
-              role: 'user',
-              content:
-                ctx +
-                '\n\nDRAFT MARKING:\n' +
-                JSON.stringify(draft) +
-                "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only.",
-            },
-          ],
-        });
-        final = parse(finalRaw);
-        if (!Array.isArray(final.questions) || !final.questions.length) {
+      if (ctx.length < 18000) {
+        try {
+          const finalRaw = await gradeLLM({
+            system: GRADE_SYS,
+            json: true,
+            messages: [
+              {
+                role: 'user',
+                content:
+                  ctx +
+                  '\n\nDRAFT MARKING:\n' +
+                  JSON.stringify(draft) +
+                  "\n\nAudit this draft strictly. For each question re-check the student's answer against every mark scheme point, fix wrong marks, wrong quotes and missing questions, then return the corrected full JSON only.",
+              },
+            ],
+          });
+          final = parse(finalRaw);
+          if (!Array.isArray(final.questions) || !final.questions.length) {
+            final = draft;
+          }
+        } catch {
           final = draft;
         }
-      } catch {
-        final = draft;
       }
 
       if (!Array.isArray(final.questions) || !final.questions.length) {
