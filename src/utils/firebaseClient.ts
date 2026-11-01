@@ -14,7 +14,6 @@ import {
   initializeFirestore,
   doc,
   getDoc,
-  getDocFromServer,
   setDoc,
   collection,
   query,
@@ -141,20 +140,6 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Connection verification when authenticated
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('the client is offline')
-    ) {
-      console.error('Please check your Firebase configuration.');
-    }
-  }
-}
-testConnection();
 
 export function getAccessToken(): string | null {
   return cachedAccessToken;
