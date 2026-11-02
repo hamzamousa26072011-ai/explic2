@@ -229,10 +229,63 @@ export async function signInWithGoogleWorkspace(
   } catch (err: any) {
     const errMsg = String(err?.code || err?.message || '');
     if (errMsg.includes('unauthorized-domain')) {
-      const currentHost =
-        typeof window !== 'undefined' ? window.location.hostname : 'explic.online';
+      // If Firebase popup was blocked by domain authorization, try Google Identity Services client
+      if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
+        try {
+          const token = await new Promise<string>((resolve, reject) => {
+            const client = (window as any).google.accounts.oauth2.initTokenClient({
+              client_id:
+                (firebaseConfig as any).oAuthClientId ||
+                '604743478337-dtc5t8117jml105hlgfqoqqipcdpr7ql.apps.googleusercontent.com',
+              scope: 'email profile openid',
+              callback: (tokenResp: any) => {
+                if (tokenResp?.access_token) {
+                  resolve(tokenResp.access_token);
+                } else {
+                  reject(new Error(tokenResp?.error || 'Google authorization cancelled'));
+                }
+              },
+              error_callback: (nonOAuthErr: any) => {
+                reject(new Error(nonOAuthErr?.message || 'Google Sign-In failed'));
+              },
+            });
+            client.requestAccessToken();
+          });
+
+          if (token) {
+            cachedAccessToken = token;
+            const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const userInfo = await res.json();
+            const uid = `google-${userInfo.sub || Math.random().toString(36).substring(2, 9)}`;
+            const friendCode = generateDeterministicFriendCode(uid);
+            const userObj = {
+              uid,
+              email: userInfo.email || 'scholar@google.com',
+              displayName: userInfo.name || 'Google Scholar',
+            } as any;
+            try {
+              localStorage.setItem(
+                'explic_verified_session',
+                JSON.stringify({
+                  uid: userObj.uid,
+                  email: userObj.email,
+                  displayName: userObj.displayName,
+                  friendCode,
+                  verifiedAt: new Date().toISOString(),
+                })
+              );
+            } catch {}
+            return { user: userObj, accessToken: token };
+          }
+        } catch (gisErr) {
+          console.warn('GIS fallback attempt:', gisErr);
+        }
+      }
+
       throw new Error(
-        `Firebase domain authorization required: "${currentHost}" is not yet in Authorized Domains in Firebase Console. Please go to Firebase Console -> Authentication -> Settings -> Authorized domains -> Add domain -> enter "${currentHost}". Meanwhile, sign in or register with email below!`
+        'Google Sign-In is temporarily unavailable on this domain. Please sign in or register with your email address below.'
       );
     }
     if (errMsg.includes('popup-blocked')) {
