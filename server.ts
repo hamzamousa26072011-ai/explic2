@@ -3036,7 +3036,7 @@ app.post('/api/llm', verifySiteKey, async (req, res) => {
 
       let streamedAny = false;
       if (ai && geminiContents.length > 0) {
-        for (const modelName of ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+        for (const modelName of ['gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest']) {
           if (streamedAny) break;
           try {
             const streamResp = await ai.models.generateContentStream({
@@ -3067,7 +3067,7 @@ app.post('/api/llm', verifySiteKey, async (req, res) => {
 
         // If generateContentStream did not emit chunks, try standard generateContent
         if (!streamedAny) {
-          for (const modelName of ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+          for (const modelName of ['gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest']) {
             if (streamedAny) break;
             try {
               const resp = await withTimeout(
@@ -3119,7 +3119,7 @@ app.post('/api/llm', verifySiteKey, async (req, res) => {
 
     // Non-streaming mode (OCR and JSON Grading)
     if (ai && geminiContents.length > 0) {
-      for (const modelName of ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest']) {
+      for (const modelName of ['gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest']) {
         try {
           const response = await withTimeout(
             ai.models.generateContent({

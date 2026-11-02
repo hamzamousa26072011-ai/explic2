@@ -9,12 +9,14 @@ interface AiScholarTabProps {
   onAwardFocusXp?: (xpAmount: number) => void;
 }
 
-/* ================= CONFIG: edit this block ================= */
+/* ================= CONFIG: using chatgpt secret ================= */
 const CHATGPT_KEY =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CHATGPT_KEY) ||
+  (typeof import.meta !== 'undefined' &&
+    (import.meta as any).env?.VITE_CHATGPT_KEY) ||
   'key_ps5gnQ9rlp4xSCl6';
+
 const OPENAI = {
-  url: 'https://api.openai.com/v1/chat/completions',
+  url: '/api/llm',
   key: CHATGPT_KEY,
 };
 
@@ -38,14 +40,14 @@ const CONFIG: {
   grade: {
     ...OPENAI,
     model: 'gpt-4o',
-    maxTokens: 8192,
+    maxTokens: 12000,
     reasoner: false,
     jsonMode: true,
   }, // accurate marking using chatgpt secret
   gradeFallback: {
     ...OPENAI,
     model: 'gpt-4o-mini',
-    maxTokens: 8192,
+    maxTokens: 12000,
     jsonMode: true,
   }, // fallback using chatgpt secret
   ocr: {
@@ -53,9 +55,8 @@ const CONFIG: {
     ...OPENAI,
     model: 'gpt-4o',
   },
-  // To go back to free in-browser OCR instead: ocr: {mode: "tesseract"}
 };
-/* =========================================================== */
+/* ================================================================ */
 
 const sup: Record<string, string> = { '2': '²', '3': '³' };
 
@@ -129,8 +130,6 @@ export function fmt(t: unknown): string {
     .replace(/\*+/g, '');
 }
 
-export const renderAssistantMessage = fmt;
-
 interface LlmMessagePart {
   image?: string;
   text?: string;
@@ -161,11 +160,6 @@ async function llm({
   json,
   signal,
 }: LlmCallOptions): Promise<string> {
-  const A = /anthropic\.com/.test(cfg.url || '');
-  if (!cfg.key || /PASTE/.test(cfg.key)) {
-    throw new Error('Add your API key to the CONFIG block at the top of the script.');
-  }
-
   const conv = messages.map((m) => ({
     role: m.role,
     content:
@@ -173,39 +167,27 @@ async function llm({
         ? m.content
         : m.content.map((p) =>
             p.image
-              ? A
-                ? {
-                    type: 'image',
-                    source: {
-                      type: 'base64',
-                      media_type: 'image/jpeg',
-                      data: p.image,
-                    },
-                  }
-                : {
-                    type: 'image_url',
-                    image_url: {
-                      url: 'data:image/jpeg;base64,' + p.image,
-                      detail: 'high',
-                    },
-                  }
+              ? {
+                  type: 'image_url',
+                  image_url: {
+                    url: 'data:image/jpeg;base64,' + p.image,
+                    detail: 'high',
+                  },
+                }
               : { type: 'text', text: p.text || '' }
           ),
   }));
 
-  const safeMaxTokens = Math.min(cfg.maxTokens || 8192, 8192);
-  const body = A
-    ? { model: cfg.model, max_tokens: 8000, system, messages: conv, stream: !!stream }
-    : {
-        model: cfg.model,
-        messages: [{ role: 'system', content: system }, ...conv],
-        stream: !!stream,
-        max_tokens: safeMaxTokens,
-        ...(cfg.reasoner ? {} : { temperature: json ? 0 : 0.5 }),
-        ...(json && cfg.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
-      };
+  const safeMaxTokens = Math.min(cfg.maxTokens || 12000, 12000);
+  const body = {
+    model: cfg.model,
+    messages: [{ role: 'system', content: system }, ...conv],
+    stream: !!stream,
+    max_tokens: safeMaxTokens,
+    ...(cfg.reasoner ? {} : { temperature: json ? 0 : 0.5 }),
+    ...(json && cfg.jsonMode !== false ? { response_format: { type: 'json_object' } } : {}),
+  };
 
-  // Call backend /api/llm with up to 3 attempts
   let res: Response | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -222,8 +204,7 @@ async function llm({
           model: attemptModel,
           system,
           json: !!json,
-          reasoner: !!cfg.reasoner,
-          jsonMode: cfg.jsonMode,
+          stream: !!stream,
           maxTokens: safeMaxTokens,
         }),
         signal,
@@ -237,38 +218,6 @@ async function llm({
     }
     if (attempt < 2) {
       await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
-    }
-  }
-
-  if ((!res || !res.ok) && CHATGPT_KEY.startsWith('sk-')) {
-    const url = 'https://api.openai.com/v1/chat/completions';
-    const headers: Record<string, string> = {
-      Authorization: 'Bearer ' + CHATGPT_KEY,
-      'content-type': 'application/json',
-    };
-
-    for (let i = 0; i < 2; i++) {
-      try {
-        const fallbackRes = await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            model: cfg.model.startsWith('gpt-') ? cfg.model : 'gpt-4o',
-            messages: [{ role: 'system', content: system }, ...conv],
-            stream: !!stream,
-            max_tokens: safeMaxTokens,
-            temperature: json ? 0 : 0.5,
-            ...(json ? { response_format: { type: 'json_object' } } : {}),
-          }),
-          signal,
-        });
-        res = fallbackRes;
-      } catch (e: any) {
-        if (e?.name === 'AbortError') throw e;
-        break;
-      }
-      if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
-      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
     }
   }
 
@@ -296,9 +245,7 @@ async function llm({
 
   if (!stream) {
     const j = await res.json();
-    return A
-      ? (j.content || []).map((c: any) => c.text || '').join('')
-      : j.choices?.[0]?.message?.content || '';
+    return j.choices?.[0]?.message?.content || '';
   }
 
   if (!res.body) {
@@ -341,7 +288,7 @@ async function llm({
 }
 
 const CHAT_SYS =
-  'You are a friendly, sharp AI tutor and examiner. Answer quickly, clearly and accurately. Write plain text only: never use LaTeX, dollar signs, markdown headings, tables or code fences unless the user asks for code. Write maths in plain text (x^2, 3/4, sqrt(9)). Keep paragraphs short and use simple \'- \' lists only when they help.';
+  'You are a friendly, sharp AI tutor and examiner. Answer quickly, clearly and accurately. Write plain text only: never use LaTeX, dollar signs, markdown headings, tables or code fences unless the user asks for code. Write maths in plain text (x^2, 3/4, sqrt(9)). Keep paragraphs short and use simple \'- \' lists only when they help. The user may attach pictures (photos of questions, diagrams, handwritten work): read them carefully and answer from what you see.';
 
 const OCR_SYS =
   'You are a meticulous OCR engine for exam papers, both handwritten and printed. Transcribe EVERY word, number, symbol, label and table on the page exactly as written, in reading order, keeping question numbers and line breaks. Do not fix spelling, grammar or maths, and do not answer or comment. Write crossed-out text as [crossed out: ...], unreadable text as [illegible], diagrams as [diagram: short description], and tables as rows separated by \' | \'. Write maths in plain text (x^2, 3/4), never LaTeX. Output only the transcription.';
@@ -382,7 +329,7 @@ const parse = (s: string) => {
     try {
       return JSON.parse(str.slice(start, end + 1));
     } catch {
-      // Attempt to salvage truncated JSON array inside "questions": [
+      // Salvage partial/nested questions
       const qArrIdx = str.indexOf('"questions"');
       if (qArrIdx !== -1) {
         const bracketIdx = str.indexOf('[', qArrIdx);
@@ -456,7 +403,20 @@ const layerText = (tc: any): string => {
 };
 
 const jpg = (c: HTMLCanvasElement): string =>
-  c.toDataURL('image/jpeg', 0.75).split(',')[1] || '';
+  c.toDataURL('image/jpeg', 0.8).split(',')[1] || '';
+
+const shrink = async (f: File): Promise<string> => {
+  const b = await createImageBitmap(f);
+  const k = Math.min(1, 1600 / Math.max(b.width, b.height));
+  const c = document.createElement('canvas');
+  c.width = b.width * k;
+  c.height = b.height * k;
+  const x = c.getContext('2d')!;
+  x.fillStyle = '#fff';
+  x.fillRect(0, 0, c.width, c.height);
+  x.drawImage(b, 0, 0, c.width, c.height);
+  return jpg(c);
+};
 
 async function toPages(
   f: File,
@@ -475,13 +435,12 @@ async function toPages(
       const pg = await pdf.getPage(i);
       const tc = await pg.getTextContent();
       const hint = layerText(tc);
-      // Digital Mark Scheme pages already contain complete selectable text
       if (kind === 'm' && hint.trim().length > 80) {
         out.push({ img: '', hint });
         continue;
       }
       const v0 = pg.getViewport({ scale: 1 });
-      const vp = pg.getViewport({ scale: 1500 / Math.max(v0.width, v0.height) });
+      const vp = pg.getViewport({ scale: 1800 / Math.max(v0.width, v0.height) });
       const c = document.createElement('canvas');
       c.width = vp.width;
       c.height = vp.height;
@@ -492,7 +451,7 @@ async function toPages(
   }
 
   const bmp = await createImageBitmap(f);
-  const k = Math.min(1, 1500 / Math.max(bmp.width, bmp.height));
+  const k = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas');
   c.width = bmp.width * k;
   c.height = bmp.height * k;
@@ -509,7 +468,6 @@ async function ocr(
   label: string,
   kind: 'a' | 'm' = 'a'
 ): Promise<string> {
-  // Digital Mark Scheme PDF pages already have exact text
   if (!p.img || (kind === 'm' && p.hint.trim().length > 80)) {
     return p.hint;
   }
@@ -517,11 +475,7 @@ async function ocr(
     try {
       return await llm({
         system: OCR_SYS,
-        cfg: {
-          url: CONFIG.ocr.url || OPENAI.url,
-          key: CONFIG.ocr.key || OPENAI.key,
-          model: CONFIG.ocr.model || 'gpt-4o',
-        },
+        cfg: CONFIG.ocr,
         messages: [
           {
             role: 'user',
@@ -543,7 +497,7 @@ async function ocr(
       if (p.hint.trim().length > 20) return p.hint;
     }
   }
-  if (p.hint.length > 30) return p.hint; // digital PDF: its own text is exact, no OCR needed
+  if (p.hint.length > 30) return p.hint;
   const TesseractLib = (window as any).Tesseract;
   if (TesseractLib && p.img) {
     try {
@@ -602,6 +556,12 @@ font-family:inherit;color:var(--ink);background:transparent;line-height:1.55}
 @keyframes b{50%{opacity:.25}}
 #ai-examiner .bar{display:flex;gap:10px;align-items:flex-end;padding:12px;border-top:1px solid var(--line)}
 #ai-examiner .bar textarea{flex:1;resize:none;border:0;background:var(--soft);color:var(--ink);font:500 15px Manrope,sans-serif;padding:12px 16px;border-radius:14px;max-height:140px}
+#ai-examiner .att{border:0;background:var(--soft);color:var(--mute);width:44px;height:44px;border-radius:12px;cursor:pointer;flex:none;display:grid;place-items:center}#ai-examiner .att:hover{color:var(--ink)}
+#ai-examiner .pv{display:none;gap:10px;padding:12px 12px 0;flex-wrap:wrap}#ai-examiner .pv.on{display:flex}
+#ai-examiner .pv div{position:relative}#ai-examiner .pv img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line);display:block}
+#ai-examiner .pv button{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:0;background:var(--acc);color:var(--on-acc);font-size:13px;line-height:1;cursor:pointer}
+#ai-examiner .m.u img{display:block;max-width:220px;max-height:200px;border-radius:12px;margin-bottom:6px}
+#ai-examiner .chat.drag{outline:2px dashed var(--acc);outline-offset:-6px}
 #ai-examiner .go{border:0;background:var(--acc);color:var(--on-acc);width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
 
 /* paper */
@@ -659,7 +619,7 @@ background:radial-gradient(90% 130% at 0% 0%,color-mix(in srgb,var(--c) 40%,#0f1
 `;
 
 const EMPTY_CHAT_HTML =
-  '<div class="empty" id="emp"><h3>Ask anything</h3><p>Questions, explanations, revision help.</p></div>';
+  '<div class="empty" id="emp"><h3>Ask anything</h3><p>Questions, explanations, revision help. You can attach a picture too.</p></div>';
 
 export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   theme = 'light',
@@ -676,8 +636,11 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   const genRef = useRef<number>(0);
   const [busy, setBusy] = useState(false);
   const [inpVal, setInpVal] = useState('');
+  const [pics, setPics] = useState<string[]>([]);
+  const [chatDrag, setChatDrag] = useState(false);
   const msgsRef = useRef<HTMLDivElement | null>(null);
   const inpRef = useRef<HTMLTextAreaElement | null>(null);
+  const picInputRef = useRef<HTMLInputElement | null>(null);
 
   // Paper correction state
   const [files, setFiles] = useState<{ a: File[]; m: File[] }>({
@@ -701,12 +664,36 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     }
   }, []);
 
+  const addPics = async (fileList: FileList | File[]) => {
+    const images = Array.from(fileList).filter((f) =>
+      f.type.startsWith('image/')
+    );
+    const loaded: string[] = [];
+    for (const f of images) {
+      if (pics.length + loaded.length >= 4) break;
+      try {
+        const b64 = await shrink(f);
+        if (b64) loaded.push(b64);
+      } catch {
+        // ignore invalid image
+      }
+    }
+    if (loaded.length) {
+      setPics((prev) => [...prev, ...loaded].slice(0, 4));
+    }
+  };
+
+  const removePic = (idx: number) => {
+    setPics((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const handleNewChat = () => {
     genRef.current += 1;
     if (busy) {
       ctlRef.current?.abort();
     }
     histRef.current.length = 0;
+    setPics([]);
     if (msgsRef.current) {
       msgsRef.current.innerHTML = EMPTY_CHAT_HTML;
     }
@@ -728,14 +715,20 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       return;
     }
     const text = inpVal.trim();
-    if (!text) return;
+    if (!text && !pics.length) return;
 
-    if (onTriggerSecurityLockdown && onTriggerSecurityLockdown(text, 'AI Examiner Chat')) {
+    if (
+      onTriggerSecurityLockdown &&
+      onTriggerSecurityLockdown(text, 'AI Examiner Chat')
+    ) {
       return;
     }
 
     const msgsEl = msgsRef.current;
     if (!msgsEl) return;
+
+    const sentPics = [...pics];
+    setPics([]);
 
     msgsEl.querySelector('#emp')?.remove();
     setInpVal('');
@@ -743,15 +736,24 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       inpRef.current.style.height = 'auto';
     }
 
+    const imgTags = sentPics
+      .map((p) => `<img src="data:image/jpeg;base64,${p}" alt="Attached scan">`)
+      .join('');
+
     msgsEl.insertAdjacentHTML(
       'beforeend',
-      `<div class="m u">${esc(text)}</div><div class="m a"><span class="dots"><i></i><i></i><i></i></span></div>`
+      `<div class="m u">${imgTags}${esc(text)}</div><div class="m a"><span class="dots"><i></i><i></i><i></i></span></div>`
     );
     const box = msgsEl.lastElementChild as HTMLElement;
     msgsEl.scrollTop = msgsEl.scrollHeight;
 
     const my = genRef.current;
-    histRef.current.push({ role: 'user', content: text });
+    const q = text || 'Look at the attached picture and help me with it.';
+    const content = sentPics.length
+      ? [...sentPics.map((image) => ({ image })), { text: q }]
+      : q;
+
+    histRef.current.push({ role: 'user', content });
     setBusy(true);
     const ctl = new AbortController();
     ctlRef.current = ctl;
@@ -764,7 +766,13 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
         cfg: CONFIG.chat,
         stream: true,
         signal: ctl.signal,
-        messages: histRef.current.slice(-20),
+        messages: histRef.current
+          .slice(-20)
+          .map((m, i, a) =>
+            Array.isArray(m.content) && i < a.length - 3
+              ? { role: m.role, content: m.content.filter((p) => p.text) }
+              : m
+          ),
         onToken: (t) => {
           acc = t;
           if (!raf) {
@@ -953,6 +961,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     if (resRef.current) resRef.current.innerHTML = '';
 
     try {
+      status('Preparing files for analysis', 2);
       const jobs: Array<{ k: 'a' | 'm'; p: { img: string; hint: string }; l: string }> = [];
       for (const k of ['a', 'm'] as const) {
         for (const f of files[k]) {
@@ -967,7 +976,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       let d = 0;
       const out = await pool(
         jobs,
-        CONFIG.ocr.mode === 'vision' ? 3 : 1,
+        CONFIG.ocr.mode === 'vision' ? 2 : 1,
         async (j) => {
           const t = await ocr(j.p, j.l, j.k);
           status(
@@ -1074,7 +1083,21 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
         {/* CHATBOT */}
         <div className={`panel ${activeTab === 'chat' ? 'on' : ''}`} id="p-chat">
-          <div className="chat">
+          <div
+            className={`chat ${chatDrag ? 'drag' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setChatDrag(true);
+            }}
+            onDragLeave={() => setChatDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setChatDrag(false);
+              if (e.dataTransfer.files?.length) {
+                addPics(e.dataTransfer.files);
+              }
+            }}
+          >
             <div className="chead">
               <b>Chatbot</b>
               <button
@@ -1093,13 +1116,72 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 __html: EMPTY_CHAT_HTML,
               }}
             />
+            <div className={`pv ${pics.length > 0 ? 'on' : ''}`} id="pv">
+              {pics.map((p, i) => (
+                <div key={i}>
+                  <img src={`data:image/jpeg;base64,${p}`} alt="Attached picture" />
+                  <button
+                    type="button"
+                    aria-label="Remove picture"
+                    onClick={() => removePic(i)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
             <div className="bar">
+              <button
+                type="button"
+                className="att"
+                id="att"
+                aria-label="Attach a picture"
+                title="Attach a picture"
+                onClick={() => picInputRef.current?.click()}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="3" />
+                  <circle cx="9" cy="9" r="1.6" />
+                  <path d="m21 15-5-5L5 21" />
+                </svg>
+              </button>
+              <input
+                ref={picInputRef}
+                type="file"
+                id="pic"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) addPics(e.target.files);
+                  e.target.value = '';
+                }}
+              />
               <textarea
                 id="inp"
                 ref={inpRef}
                 rows={1}
                 placeholder="Type your message"
                 value={inpVal}
+                onPaste={(e) => {
+                  const clipFiles = Array.from(e.clipboardData.files);
+                  const imgFiles = clipFiles.filter((f) =>
+                    f.type.startsWith('image/')
+                  );
+                  if (imgFiles.length) {
+                    e.preventDefault();
+                    addPics(imgFiles);
+                  }
+                }}
                 onChange={(e) => {
                   setInpVal(e.target.value);
                   e.target.style.height = 'auto';
