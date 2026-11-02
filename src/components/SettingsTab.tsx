@@ -268,7 +268,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             <div>
               <h2 className="text-sm font-semibold">Cloud &amp; Google Sync</h2>
               <p className={`text-[11px] ${mutedText}`}>
-                Connect Classroom, Calendar &amp; Cloud Sync
+                Connect Google Tasks, Classroom &amp; Calendar
               </p>
             </div>
           </div>
@@ -369,32 +369,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
               {authErrorMsg && (
                 <div
-                  className={`p-3 rounded-xl border text-[11px] font-medium ${
-                    authErrorMsg.includes('Authorized domains') ||
-                    authErrorMsg.includes('authorization required')
-                      ? isLight
-                        ? 'bg-amber-50 border-amber-200 text-amber-900'
-                        : 'bg-amber-950/40 border-amber-500/30 text-amber-200'
-                      : 'text-red-500'
+                  className={`p-3 rounded-xl border text-[11px] font-medium leading-relaxed ${
+                    isLight
+                      ? 'bg-rose-50 border-rose-200 text-rose-700'
+                      : 'bg-rose-950/40 border-rose-500/30 text-rose-300'
                   }`}
                 >
-                  {authErrorMsg.includes('Authorized domains') ||
-                  authErrorMsg.includes('authorization required') ? (
-                    <div className="space-y-1">
-                      <div className="font-bold">Firebase Authorized Domain Needed</div>
-                      <p>
-                        To enable Google Sign-In on <strong>explic.online</strong>:
-                      </p>
-                      <p className="opacity-90">
-                        Add <code className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/10 font-mono">explic.online</code> in <strong>Firebase Console &rarr; Authentication &rarr; Settings &rarr; Authorized domains</strong>.
-                      </p>
-                      <p className="pt-0.5 opacity-90">
-                        &rarr; Or sign in with your email &amp; password right here!
-                      </p>
-                    </div>
-                  ) : (
-                    authErrorMsg
-                  )}
+                  {authErrorMsg}
                 </div>
               )}
 

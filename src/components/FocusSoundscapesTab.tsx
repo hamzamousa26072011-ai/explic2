@@ -30,6 +30,7 @@ interface FlipCardUnitProps {
   onIncrement?: () => void;
   onDecrement?: () => void;
   disabledAdjust?: boolean;
+  isFullscreen?: boolean;
 }
 
 const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
@@ -39,6 +40,7 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
   onIncrement,
   onDecrement,
   disabledAdjust,
+  isFullscreen,
 }) => {
   const formatted = String(Math.max(0, value)).padStart(2, '0');
   const [prevFormatted, setPrevFormatted] = useState(formatted);
@@ -61,16 +63,24 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
     <div className="flex flex-col items-center select-none group">
       {/* Outer Rounded Flip-Card Shell matching reference image */}
       <div
-        className={`relative w-32 h-40 sm:w-56 sm:h-64 md:w-72 md:h-80 rounded-[32px] sm:rounded-[42px] p-2 border transition-all ${
+        className={`relative ${
+          isFullscreen
+            ? 'w-[27vw] max-w-[380px] h-[34vw] max-h-[460px] rounded-[24px] sm:rounded-[44px] md:rounded-[54px] p-1.5 sm:p-3'
+            : 'w-[27vw] max-sm:max-w-[110px] h-[35vw] max-sm:max-h-[148px] sm:w-56 sm:h-68 md:w-68 md:h-80 lg:w-76 lg:h-88 xl:w-84 xl:h-96 rounded-2xl sm:rounded-[38px] md:rounded-[46px] p-1 sm:p-2.5'
+        } border transition-all duration-300 ${
           isLight
-            ? 'bg-white border-[#E2E8F0] shadow-[0_14px_34px_rgba(15,23,42,0.06)]'
-            : 'bg-[#111827] border-white/15 shadow-[0_18px_40px_rgba(0,0,0,0.45)]'
+            ? 'bg-white border-[#E2E8F0] shadow-[0_12px_36px_rgba(15,23,42,0.06)]'
+            : 'bg-[#111827] border-white/15 shadow-[0_16px_40px_rgba(0,0,0,0.5)]'
         }`}
       >
         {/* Inner Split-Flap Face */}
         <div
           key={flipKey}
-          className={`relative w-full h-full rounded-[26px] sm:rounded-[36px] border overflow-hidden flex items-center justify-center ${
+          className={`relative w-full h-full ${
+            isFullscreen
+              ? 'rounded-[18px] sm:rounded-[36px] md:rounded-[46px]'
+              : 'rounded-[14px] sm:rounded-[32px] md:rounded-[40px]'
+          } border overflow-hidden flex items-center justify-center ${
             isFlipping ? 'animate-flip-snap' : ''
           } ${
             isLight
@@ -103,7 +113,11 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
             >
               <div className="w-full h-[200%] flex items-center justify-center">
                 <span
-                  className={`font-display tabular-nums font-extrabold text-6xl sm:text-8xl md:text-[112px] tracking-tight leading-none ${
+                  className={`font-display tabular-nums font-extrabold ${
+                    isFullscreen
+                      ? 'text-5xl sm:text-8xl md:text-9xl lg:text-[145px] xl:text-[175px]'
+                      : 'text-3xl max-sm:text-4xl sm:text-7xl md:text-8xl lg:text-9xl xl:text-[124px]'
+                  } tracking-tight leading-none ${
                     isLight ? 'text-[#0F172A]' : 'text-[#F8FAFC]'
                   }`}
                 >
@@ -124,7 +138,11 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
             >
               <div className="w-full h-[200%] -translate-y-1/2 flex items-center justify-center">
                 <span
-                  className={`font-display tabular-nums font-extrabold text-6xl sm:text-8xl md:text-[112px] tracking-tight leading-none ${
+                  className={`font-display tabular-nums font-extrabold ${
+                    isFullscreen
+                      ? 'text-5xl sm:text-8xl md:text-9xl lg:text-[145px] xl:text-[175px]'
+                      : 'text-3xl max-sm:text-4xl sm:text-7xl md:text-8xl lg:text-9xl xl:text-[124px]'
+                  } tracking-tight leading-none ${
                     isLight ? 'text-[#0F172A]' : 'text-[#F8FAFC]'
                   }`}
                 >
@@ -136,7 +154,11 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
 
           {/* Main Digit Display */}
           <span
-            className={`relative z-10 font-display tabular-nums font-extrabold text-6xl sm:text-8xl md:text-[112px] tracking-tight leading-none ${
+            className={`relative z-10 font-display tabular-nums font-extrabold ${
+              isFullscreen
+                ? 'text-5xl sm:text-8xl md:text-9xl lg:text-[145px] xl:text-[175px]'
+                : 'text-3xl max-sm:text-4xl sm:text-7xl md:text-8xl lg:text-9xl xl:text-[124px]'
+            } tracking-tight leading-none ${
               isLight ? 'text-[#0F172A]' : 'text-[#F8FAFC]'
             }`}
           >
@@ -183,7 +205,11 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
 
         {/* Left Semicircular Mechanical Hinge Cap */}
         <div
-          className={`absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1.5 w-3.5 h-6 sm:w-4 sm:h-7 rounded-r-full border z-30 ${
+          className={`absolute left-0 top-1/2 -translate-y-1/2 ${
+            isFullscreen
+              ? 'w-3 h-5 sm:w-5 sm:h-9 -translate-x-1 sm:-translate-x-2'
+              : '-translate-x-1 sm:-translate-x-1.5 w-2.5 h-4 sm:w-4 sm:h-7 md:w-4.5 md:h-8'
+          } rounded-r-full border z-30 ${
             isLight
               ? 'bg-[#E2E8F0] border-[#CBD5E1]'
               : 'bg-[#1E293B] border-white/25'
@@ -192,7 +218,11 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
 
         {/* Right Semicircular Mechanical Hinge Cap */}
         <div
-          className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1.5 w-3.5 h-6 sm:w-4 sm:h-7 rounded-l-full border z-30 ${
+          className={`absolute right-0 top-1/2 -translate-y-1/2 ${
+            isFullscreen
+              ? 'w-3 h-5 sm:w-5 sm:h-9 translate-x-1 sm:translate-x-2'
+              : 'translate-x-1 sm:translate-x-1.5 w-2.5 h-4 sm:w-4 sm:h-7 md:w-4.5 md:h-8'
+          } rounded-l-full border z-30 ${
             isLight
               ? 'bg-[#E2E8F0] border-[#CBD5E1]'
               : 'bg-[#1E293B] border-white/25'
@@ -202,7 +232,7 @@ const FlipCardUnit: React.FC<FlipCardUnitProps> = ({
 
       {/* Unit Label underneath card matching reference image */}
       <span
-        className={`mt-4 text-[11px] sm:text-xs font-bold tracking-[0.22em] uppercase ${
+        className={`mt-2.5 sm:mt-4 text-[10px] sm:text-xs font-bold tracking-[0.18em] sm:tracking-[0.22em] uppercase ${
           isLight ? 'text-[#475569]' : 'text-[#94A3B8]'
         }`}
       >
@@ -381,27 +411,32 @@ export const FocusSoundscapesTab: React.FC<FocusSoundscapesTabProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`min-h-[60vh] flex flex-col justify-between p-8 ${
+      className={`flex flex-col justify-between transition-all duration-300 ${
         isFullscreen
-          ? `fixed inset-0 z-50 ${isLight ? 'bg-[#F9F7F3]' : 'bg-[#090D16]'}`
-          : 'rounded-3xl border ' + (isLight ? 'bg-white border-[#E2E8F0]' : 'bg-[#111827] border-white/10')
+          ? `fixed inset-0 z-50 h-screen w-screen p-6 sm:p-10 md:p-14 overflow-hidden ${
+              isLight ? 'bg-[#F9F7F3]' : 'bg-[#090D16]'
+            }`
+          : 'rounded-3xl border min-h-[calc(100vh-140px)] p-5 sm:p-8 md:p-10 ' +
+            (isLight
+              ? 'bg-white border-[#E2E8F0] shadow-[0_4px_24px_rgba(15,23,42,0.03)]'
+              : 'bg-[#111827] border-white/10')
       }`}
     >
       {/* Top Toolbar */}
-      <div className="flex items-center justify-between text-xs font-semibold">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 text-xs font-semibold w-full">
         <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-            <span className="tracking-wide">CUSTOM ({Math.round(configuredTotalSeconds/60)} MIN)</span>
+            <span className="tracking-wide text-[11px] sm:text-xs">CUSTOM ({Math.round(configuredTotalSeconds/60)} MIN)</span>
         </div>
         <div className="flex items-center gap-2">
             <button
                 type="button"
                 onClick={handleToggleRain}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full border text-xs transition-all ${
                     rainActive ? (isLight ? 'bg-[#F1F5F9] border-[#E2E8F0]' : 'bg-white/10 border-white/20') : (isLight ? 'border-[#E2E8F0]' : 'border-white/10')
                 }`}
             >
-                <CloudRain className="w-4 h-4" />
+                <CloudRain className="w-3.5 h-3.5" />
                 Rain
             </button>
             <button
@@ -414,48 +449,78 @@ export const FocusSoundscapesTab: React.FC<FocusSoundscapesTabProps> = ({
                     document.exitFullscreen();
                   }
                 }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full border text-xs transition-all ${
                     isLight ? 'border-[#E2E8F0]' : 'border-white/10'
                 }`}
             >
-                <Maximize2 className="w-4 h-4" />
+                <Maximize2 className="w-3.5 h-3.5" />
                 {isFullscreen ? 'Exit Full Screen' : 'Full Screen'}
             </button>
         </div>
       </div>
 
       {/* Timer Display */}
-      <div className="flex flex-col items-center justify-center flex-grow py-12">
-        <div className="flex items-center gap-8 md:gap-12">
-            <FlipCardUnit value={hours} label="HOURS" isLight={isLight} disabledAdjust={isRunning} onIncrement={() => handleAdjustUnit(3600)} onDecrement={() => handleAdjustUnit(-3600)} />
-            <FlipCardUnit value={minutes} label="MINUTES" isLight={isLight} disabledAdjust={isRunning} onIncrement={() => handleAdjustUnit(60)} onDecrement={() => handleAdjustUnit(-60)} />
-            <FlipCardUnit value={seconds} label="SECONDS" isLight={isLight} disabledAdjust={isRunning} onIncrement={() => handleAdjustUnit(1)} onDecrement={() => handleAdjustUnit(-1)} />
+      <div className="flex flex-col items-center justify-center flex-grow py-4 sm:py-8 md:py-12 w-full">
+        <div
+          className={`flex items-center justify-center w-full max-w-full ${
+            isFullscreen
+              ? 'gap-3 sm:gap-8 md:gap-14 lg:gap-20'
+              : 'gap-2 sm:gap-6 md:gap-10 lg:gap-14'
+          }`}
+        >
+            <FlipCardUnit
+              value={hours}
+              label="HOURS"
+              isLight={isLight}
+              disabledAdjust={isRunning}
+              isFullscreen={isFullscreen}
+              onIncrement={() => handleAdjustUnit(3600)}
+              onDecrement={() => handleAdjustUnit(-3600)}
+            />
+            <FlipCardUnit
+              value={minutes}
+              label="MINUTES"
+              isLight={isLight}
+              disabledAdjust={isRunning}
+              isFullscreen={isFullscreen}
+              onIncrement={() => handleAdjustUnit(60)}
+              onDecrement={() => handleAdjustUnit(-60)}
+            />
+            <FlipCardUnit
+              value={seconds}
+              label="SECONDS"
+              isLight={isLight}
+              disabledAdjust={isRunning}
+              isFullscreen={isFullscreen}
+              onIncrement={() => handleAdjustUnit(1)}
+              onDecrement={() => handleAdjustUnit(-1)}
+            />
         </div>
-        <div className={`mt-10 inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-[11px] font-bold uppercase ${isLight ? 'bg-white border-[#E2E8F0]' : 'bg-[#111827] border-white/10'}`}>
+        <div className={`mt-6 sm:mt-10 inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-[11px] sm:text-xs font-bold uppercase transition-all ${isLight ? 'bg-white border-[#E2E8F0]' : 'bg-[#111827] border-white/10'}`}>
             <span className={`w-2 h-2 rounded-full ${isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
             {statusLabel}
         </div>
       </div>
 
       {/* Start/Reset Row */}
-      <div className="flex flex-col items-center gap-4">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col items-center gap-3 sm:gap-4 w-full">
+        <div className="flex items-center justify-center gap-4 w-full max-w-xs sm:max-w-none">
           <button
             type="button"
             onClick={() => setIsRunning((r) => !r)}
-            className={`px-12 py-3.5 rounded-full text-xs font-bold tracking-wider uppercase transition-all ${primaryBtn}`}
+            className={`flex-1 sm:flex-initial py-3.5 px-8 sm:px-14 rounded-full text-xs sm:text-sm font-bold tracking-wider uppercase transition-all shadow-sm ${primaryBtn}`}
           >
             {isRunning ? 'PAUSE' : 'START'}
           </button>
           <button
             type="button"
             onClick={() => { setIsRunning(false); setSecondsLeft(configuredTotalSeconds); }}
-            className={`px-8 py-3.5 rounded-full border text-xs font-bold tracking-wider uppercase transition-all ${outlineBtn}`}
+            className={`flex-1 sm:flex-initial py-3.5 px-6 sm:px-10 rounded-full border text-xs sm:text-sm font-bold tracking-wider uppercase transition-all ${outlineBtn}`}
           >
             RESET
           </button>
         </div>
-        <p className={`text-[10px] font-medium ${mutedText}`}>
+        <p className={`text-[10px] sm:text-[11px] font-medium text-center ${mutedText}`}>
             Space: Play/Pause - Esc: Exit Full Screen
         </p>
       </div>

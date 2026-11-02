@@ -534,19 +534,19 @@ const EXAMINER_STYLES = `
 #ai-examiner{--bg:#f6f7f9;--card:#fff;--ink:#0f1219;--mute:#6b7280;--line:#e6e8ec;--soft:#eceef1;--acc:#0f1219;--on-acc:#fff;--ok:#0f9f6e;--mid:#d98a06;--bad:#dc3b3b;
 font-family:inherit;color:var(--ink);background:transparent;line-height:1.55}
 .dark #ai-examiner,html.dark #ai-examiner,body.dark-mode #ai-examiner,[data-theme="dark"] #ai-examiner,[data-bs-theme="dark"] #ai-examiner,#ai-examiner.dark{--bg:#0f1219;--card:#161a22;--ink:#eef0f4;--mute:#8b93a3;--line:#262b35;--soft:#1e232d;--acc:#f3f4f6;--on-acc:#0f1219}
-#ai-examiner button,#ai-examiner textarea{font-family:inherit}
+#ai-examiner button,#ai-examiner textarea,#ai-examiner input{font-family:inherit}
 #ai-examiner *{box-sizing:border-box}
 #ai-examiner h2,#ai-examiner h3,#ai-examiner h4,#ai-examiner p{margin:0}
-#ai-examiner .tabs{display:inline-flex;background:var(--soft);padding:4px;border-radius:14px;margin-bottom:22px}
-#ai-examiner .tabs button{border:0;background:none;color:var(--mute);font:600 14px Manrope,sans-serif;padding:10px 22px;border-radius:10px;cursor:pointer}
+#ai-examiner .tabs{display:inline-flex;background:var(--soft);padding:4px;border-radius:14px;margin-bottom:20px;max-width:100%}
+#ai-examiner .tabs button{border:0;background:none;color:var(--mute);font:600 14px Manrope,sans-serif;padding:10px 22px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:all .15s}
 #ai-examiner .tabs button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 6px rgba(0,0,0,.12)}
 #ai-examiner .panel{display:none}#ai-examiner .panel.on{display:block}
-#ai-examiner button:focus-visible,#ai-examiner textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+#ai-examiner button:focus-visible,#ai-examiner textarea:focus-visible,#ai-examiner input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 
 /* chat */
-#ai-examiner .chat{display:flex;flex-direction:column;height:min(70vh,680px);background:var(--card);border:1px solid var(--line);border-radius:24px;overflow:hidden}
-#ai-examiner .chead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}#ai-examiner .chead b{font-size:14px}
-#ai-examiner .nc{border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:13px;padding:8px 14px;border-radius:12px;cursor:pointer}#ai-examiner .nc:hover{background:var(--soft)}
+#ai-examiner .chat{display:flex;flex-direction:column;height:min(72vh,700px);background:var(--card);border:1px solid var(--line);border-radius:24px;overflow:hidden}
+#ai-examiner .chead{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--card)}#ai-examiner .chead b{font-size:14px}
+#ai-examiner .nc{border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:13px;padding:8px 14px;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .15s}#ai-examiner .nc:hover{background:var(--soft)}
 #ai-examiner #msgs{flex:1;overflow-y:auto;padding:24px 22px;display:flex;flex-direction:column;gap:20px}
 #ai-examiner .empty{margin:auto;text-align:center;color:var(--mute)}#ai-examiner .empty h3{color:var(--ink);font-size:20px;margin-bottom:4px}
 #ai-examiner .m{max-width:88%;font-size:15.5px}
@@ -564,6 +564,11 @@ font-family:inherit;color:var(--ink);background:transparent;line-height:1.55}
 #ai-examiner .chat.drag{outline:2px dashed var(--acc);outline-offset:-6px}
 #ai-examiner .go{border:0;background:var(--acc);color:var(--on-acc);width:44px;height:44px;border-radius:12px;font-size:18px;cursor:pointer;flex:none}
 
+/* paper correction header & toolbar */
+#ai-examiner .phead{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border:1px solid var(--line);background:var(--card);border-radius:18px;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+#ai-examiner .phead b{font-size:15px;font-weight:700}
+#ai-examiner .phead-actions{display:flex;align-items:center;gap:8px}
+
 /* paper */
 #ai-examiner .zones{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
 #ai-examiner .drop{background:var(--card);border:1.5px dashed var(--line);border-radius:24px;padding:20px;transition:.15s}
@@ -574,7 +579,7 @@ font-family:inherit;color:var(--ink);background:transparent;line-height:1.55}
 #ai-examiner .fc{background:var(--soft);border-radius:8px;padding:4px 6px 4px 10px;font-size:12px;display:inline-flex;gap:6px;align-items:center;max-width:100%}
 #ai-examiner .fc button{border:0;background:none;color:var(--mute);cursor:pointer;font-size:15px;line-height:1}
 #ai-examiner .drop textarea{width:100%;margin-top:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font:13px Manrope,sans-serif;resize:vertical;min-height:54px}
-#ai-examiner .run{margin-top:16px;width:100%;border:0;background:var(--acc);color:var(--on-acc);font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer}
+#ai-examiner .run{margin-top:16px;width:100%;border:0;background:var(--acc);color:var(--on-acc);font:700 16px Manrope,sans-serif;padding:16px;border-radius:14px;cursor:pointer;transition:opacity .15s}
 #ai-examiner .run:disabled{opacity:.45;cursor:not-allowed}
 #ai-examiner .prog{display:none;margin-top:16px}#ai-examiner .prog.on{display:block}
 #ai-examiner .prog .t{height:6px;background:var(--soft);border-radius:9px;overflow:hidden;margin-top:8px}
@@ -595,26 +600,70 @@ background:radial-gradient(90% 130% at 0% 0%,color-mix(in srgb,var(--c) 40%,#0f1
 #ai-examiner .hi p{opacity:.88;font-size:14.5px;max-width:56ch}
 #ai-examiner .st{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}#ai-examiner .st span{background:rgba(255,255,255,.12);padding:5px 12px;border-radius:99px;font-size:13px;font-weight:600}
 
+/* Paper chat action banner */
+#ai-examiner .paper-chat-banner{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 20px;margin:20px 0;flex-wrap:wrap;gap:12px}
+#ai-examiner .paper-chat-banner .info h4{font-size:15px;font-weight:700;margin-bottom:3px}
+#ai-examiner .paper-chat-banner .info p{font-size:13px;color:var(--mute);margin:0}
+#ai-examiner .btn-chat-paper{border:0;background:var(--acc);color:var(--on-acc);font-weight:700;font-size:13px;padding:10px 18px;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:opacity .15s}
+#ai-examiner .btn-chat-paper:hover{opacity:.9}
+
+/* Question chat button */
+#ai-examiner .chat-q-btn{border:1px solid var(--line);background:var(--soft);color:var(--ink);font-weight:600;font-size:12px;padding:5px 12px;border-radius:10px;cursor:pointer;margin-left:auto;transition:.15s;display:inline-flex;align-items:center;gap:5px}
+#ai-examiner .chat-q-btn:hover{background:var(--card);border-color:var(--acc)}
+
 #ai-examiner .sec{margin:34px 0 14px;font-size:20px;font-weight:800;display:flex;align-items:center;gap:10px}
 #ai-examiner .sec em{font-style:normal;font-size:13px;font-weight:700;background:var(--soft);color:var(--mute);padding:2px 10px;border-radius:99px}
 #ai-examiner .mk{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--bad);border-radius:16px;padding:16px 20px;margin-bottom:12px}
-#ai-examiner .mkh{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+#ai-examiner .mkh{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px}
 #ai-examiner .mk p{font-size:14.5px;margin-top:6px}#ai-examiner .lb{display:inline-block;font-weight:700;font-size:12.5px;color:var(--bad);margin-right:8px}#ai-examiner .lb.ok{color:var(--ok)}
 #ai-examiner .chip{font-weight:800;font-size:13px;padding:3px 11px;border-radius:99px}
 #ai-examiner .chip.ok{background:rgba(21,160,90,.14);color:var(--ok)}#ai-examiner .chip.mid{background:rgba(217,138,6,.15);color:var(--mid)}#ai-examiner .chip.bad{background:rgba(224,58,58,.13);color:var(--bad)}
 #ai-examiner .good{background:rgba(21,160,90,.1);color:var(--ok);padding:16px 20px;border-radius:16px;font-weight:600}
 #ai-examiner .qc{background:var(--card);border:1px solid var(--line);border-radius:18px;margin-bottom:14px;overflow:hidden}
-#ai-examiner .qh{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line)}
-#ai-examiner .qn{font-weight:800}#ai-examiner .qt{flex:1;color:var(--mute);font-size:14px}
+#ai-examiner .qh{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+#ai-examiner .qn{font-weight:800}#ai-examiner .qt{flex:1;min-width:160px;color:var(--mute);font-size:14px}
 #ai-examiner .g3{display:grid;grid-template-columns:repeat(3,1fr)}
 #ai-examiner .g3>div{padding:16px 20px;font-size:14px;border-right:1px solid var(--line)}#ai-examiner .g3>div:last-child{border:0;background:rgba(21,160,90,.06)}
 #ai-examiner .g3 h4{font-size:12.5px;color:var(--mute);margin-bottom:8px}
 #ai-examiner .g3 p{margin-bottom:6px}#ai-examiner .pts{list-style:none;margin:0;padding:0}#ai-examiner .pts li{display:flex;gap:8px;margin-bottom:7px}
 #ai-examiner .pts i{font-style:normal;font-weight:800;flex:none}#ai-examiner .pts .ok i{color:var(--ok)}#ai-examiner .pts .bad i{color:var(--bad)}
 #ai-examiner .mute{color:var(--mute)}
+
+/* Inline Paper Chat Card */
+#ai-examiner .paper-chat-card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;margin-top:28px}
+#ai-examiner .paper-chat-card h3{font-size:16px;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+#ai-examiner .paper-chat-card p{font-size:13px;color:var(--mute);margin-bottom:12px}
+#ai-examiner .paper-prompt-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+#ai-examiner .prompt-chip{border:1px solid var(--line);background:var(--soft);color:var(--ink);font-size:12px;font-weight:600;padding:6px 14px;border-radius:99px;cursor:pointer;transition:all .15s}
+#ai-examiner .prompt-chip:hover{background:var(--card);border-color:var(--acc)}
+#ai-examiner .paper-chat-form{display:flex;gap:8px;align-items:center}
+#ai-examiner .paper-chat-form input{flex:1;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:12px 16px;color:var(--ink);font:14px Manrope,sans-serif;outline:none;transition:border-color .15s}
+#ai-examiner .paper-chat-form input:focus{border-color:var(--acc)}
+#ai-examiner .paper-chat-form button{border:0;background:var(--acc);color:var(--on-acc);font-weight:700;font-size:13px;padding:12px 20px;border-radius:12px;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+#ai-examiner .paper-chat-form button:hover{opacity:.9}
+
 #ai-examiner details{margin-top:24px}#ai-examiner summary{cursor:pointer;color:var(--mute);font-weight:600;font-size:14px}
 #ai-examiner pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;font:12.5px/1.5 ui-monospace,monospace;max-height:340px;overflow:auto}
-@media(max-width:760px){#ai-examiner .zones,#ai-examiner .g3{grid-template-columns:1fr}#ai-examiner .g3>div{border-right:0;border-bottom:1px solid var(--line)}#ai-examiner .hero{padding:24px}}
+
+@media(max-width:768px){
+  #ai-examiner .tabs{display:flex;width:100%}
+  #ai-examiner .tabs button{flex:1;text-align:center;padding:10px 8px;font-size:13px}
+  #ai-examiner .zones,#ai-examiner .g3{grid-template-columns:1fr}
+  #ai-examiner .g3>div{border-right:0;border-bottom:1px solid var(--line)}
+  #ai-examiner .hero{padding:20px;gap:18px;flex-direction:column;align-items:center;text-align:center}
+  #ai-examiner .ringw{margin:0 auto;width:140px;height:140px}
+  #ai-examiner .hi{min-width:unset;text-align:center}
+  #ai-examiner .hi .big{font-size:38px}
+  #ai-examiner .st{justify-content:center}
+  #ai-examiner .chat{height:calc(100dvh - 220px);min-height:440px;border-radius:18px}
+  #ai-examiner .bar textarea{font-size:14px;padding:10px 12px}
+  #ai-examiner .drop{padding:14px;border-radius:18px}
+  #ai-examiner .drop label{padding:12px 4px}
+  #ai-examiner .paper-chat-banner{flex-direction:column;align-items:flex-start}
+  #ai-examiner .paper-chat-form{flex-direction:column;align-items:stretch}
+  #ai-examiner .qh{flex-wrap:wrap;gap:8px}
+  #ai-examiner .chat-q-btn{margin-left:0;margin-top:4px}
+}
 @media(prefers-reduced-motion:reduce){#ai-examiner .arc{transition:none}}
 `;
 
@@ -655,6 +704,10 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   const [progWidth, setProgWidth] = useState(0);
   const [errMsg, setErrMsg] = useState('');
   const resRef = useRef<HTMLDivElement | null>(null);
+  const lastResultRef = useRef<{
+    result: any;
+    transcript: { a: string; m: string };
+  } | null>(null);
 
   useEffect(() => {
     const pdfjsLib = (window as any).pdfjsLib;
@@ -705,7 +758,51 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     }
   };
 
-  const handleSendChat = async () => {
+  const handleStartChatWithPaperContext = (
+    customPrompt?: string,
+    autoSend = false
+  ) => {
+    setActiveTab('chat');
+    if (customPrompt) {
+      setInpVal(customPrompt);
+      if (autoSend) {
+        setTimeout(() => {
+          handleSendChat(customPrompt);
+        }, 120);
+      } else {
+        setTimeout(() => {
+          if (inpRef.current) {
+            inpRef.current.focus();
+            inpRef.current.style.height = 'auto';
+            inpRef.current.style.height =
+              Math.min(inpRef.current.scrollHeight, 140) + 'px';
+          }
+        }, 100);
+      }
+    } else if (lastResultRef.current) {
+      const r = lastResultRef.current.result;
+      const got = (r.questions || []).reduce(
+        (s: number, q: any) => s + (+q.awarded || 0),
+        0
+      );
+      const tot = (r.questions || []).reduce(
+        (s: number, q: any) => s + (+q.max_marks || 0),
+        0
+      );
+      const pct = tot ? Math.round((got / tot) * 100) : 0;
+      const defaultPrompt = `I just evaluated my paper and scored ${got}/${tot} (${pct}%). Overall feedback: "${clean(
+        r.overall_feedback || 'Reviewing mark scheme points'
+      )}". Can you help me review the mistakes and explain what I need to do to get full marks?`;
+      setInpVal(defaultPrompt);
+      setTimeout(() => {
+        handleSendChat(defaultPrompt);
+      }, 120);
+    } else {
+      handleNewChat();
+    }
+  };
+
+  const handleSendChat = async (overrideText?: string) => {
     if (!isSignedIn && onRequireSignIn) {
       onRequireSignIn();
       return;
@@ -714,7 +811,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       ctlRef.current?.abort();
       return;
     }
-    const text = inpVal.trim();
+    const text = (overrideText !== undefined ? overrideText : inpVal).trim();
     if (!text && !pics.length) return;
 
     if (
@@ -840,6 +937,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
   const renderResults = (r: any, T: { a: string; m: string }) => {
     const resEl = resRef.current;
     if (!resEl) return;
+    lastResultRef.current = { result: r, transcript: T };
 
     const qs = (r.questions || []).map((q: any) => {
       const max = Math.max(0, +q.max_marks || 0);
@@ -883,15 +981,29 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
       <p>${inl(r.overall_feedback || '')}</p>
       <div class="st"><span>${cnt('ok')} full marks</span><span>${cnt('mid')} partial</span><span>${cnt('bad')} no marks</span></div></div>
   </div>
+
+  <div class="paper-chat-banner">
+    <div class="info">
+      <h4>💬 Chat with AI Examiner about this paper</h4>
+      <p>Get worked explanations for mistakes, clarify marks, or ask how to rewrite answers.</p>
+    </div>
+    <button type="button" class="btn-chat-paper" id="heroChatBtn">
+      💬 Discuss Paper in Chat
+    </button>
+  </div>
+
   <h3 class="sec">Mistakes made <em>${wrong.length}</em></h3>
   ${
     wrong.length
       ? wrong
           .map(
             (q: any) =>
-              `<div class="mk"><div class="mkh"><b>Question ${inl(q.id)}</b><span class="chip bad">−${n(
-                q.max - q.aw
-              )} mark${q.max - q.aw === 1 ? '' : 's'}</span></div>
+              `<div class="mk"><div class="mkh"><b>Question ${inl(q.id)}</b>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <button type="button" class="chat-q-btn" data-qid="${esc(q.id)}">💬 Chat about Q${inl(q.id)}</button>
+                  <span class="chip bad">−${n(q.max - q.aw)} mark${q.max - q.aw === 1 ? '' : 's'}</span>
+                </div>
+              </div>
     ${
       (q.mistakes || [])
         .map(
@@ -906,13 +1018,17 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
           .join('')
       : `<div class="good">No mistakes found. Every mark was earned.</div>`
   }
+
   <h3 class="sec">Right answers vs mark scheme</h3>
   ${qs
     .map(
       (q: any) =>
-        `<div class="qc"><div class="qh"><span class="qn">Q${inl(q.id)}</span><span class="qt">${inl(
-          q.question || ''
-        )}</span><span class="chip ${q.st}">${n(q.aw)} / ${n(q.max)}</span></div>
+        `<div class="qc"><div class="qh">
+          <span class="qn">Q${inl(q.id)}</span>
+          <span class="qt">${inl(q.question || '')}</span>
+          <button type="button" class="chat-q-btn" data-qid="${esc(q.id)}">💬 Chat</button>
+          <span class="chip ${q.st}">${n(q.aw)} / ${n(q.max)}</span>
+        </div>
     <div class="g3">
       <div><h4>Your answer</h4>${fmt(q.student_answer) || `<p class="mute">No answer found</p>`}</div>
       <div><h4>Mark scheme points</h4><ul class="pts">${(q.points || [])
@@ -927,6 +1043,22 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
     </div></div>`
     )
     .join('')}
+
+  <div class="paper-chat-card" id="paperInlineChat">
+    <h3>💬 Ask the AI Examiner About This Paper</h3>
+    <p>Ask any follow-up question to clarify why marks were deducted or how to structure full-mark answers.</p>
+    <div class="paper-prompt-chips">
+      <button type="button" class="prompt-chip" data-prompt="Why did I lose marks across this paper and what are my biggest knowledge gaps?">🔍 Why did I lose marks?</button>
+      <button type="button" class="prompt-chip" data-prompt="Can you give me a step-by-step model answer for the questions where I lost marks?">📝 Model answers for lost marks</button>
+      <button type="button" class="prompt-chip" data-prompt="Can you generate a new practice exam question testing the concepts I got wrong?">🎯 Generate practice question</button>
+      <button type="button" class="prompt-chip" data-prompt="How would an official senior examiner evaluate my precision and keywords?">🎓 Examiner marking tips</button>
+    </div>
+    <form class="paper-chat-form" id="paperChatForm">
+      <input type="text" id="paperChatInput" placeholder="Ask anything about your paper or mark scheme..." autocomplete="off" />
+      <button type="submit" id="paperChatSubmit">Ask Examiner</button>
+    </form>
+  </div>
+
   <details><summary>Extracted text (check the OCR)</summary><pre>${esc(T.a)}</pre></details>`;
 
     requestAnimationFrame(() =>
@@ -945,6 +1077,44 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
             );
             if (p < 1) requestAnimationFrame(tick);
           })(t0);
+        }
+
+        // Attach Paper Chat Action listeners
+        resEl.querySelector('#heroChatBtn')?.addEventListener('click', () => {
+          handleStartChatWithPaperContext();
+        });
+        resEl.querySelectorAll('.chat-q-btn').forEach((btn) => {
+          btn.addEventListener('click', (e) => {
+            const qid = (e.currentTarget as HTMLElement).getAttribute('data-qid');
+            const matchedQ = qs.find((item: any) => String(item.id) === String(qid));
+            const prompt = matchedQ
+              ? `Regarding Question ${matchedQ.id}: My answer was "${clean(
+                  matchedQ.student_answer || 'N/A'
+                )}". The mark scheme required: "${(matchedQ.points || [])
+                  .map((p: any) => clean(p.text))
+                  .join('; ')}". Why were marks deducted and how should I answer to achieve full marks?`
+              : `Can you explain Question ${qid} from my paper and how to get full marks?`;
+            handleStartChatWithPaperContext(prompt, true);
+          });
+        });
+        resEl.querySelectorAll('.prompt-chip').forEach((chip) => {
+          chip.addEventListener('click', (e) => {
+            const prompt = (e.currentTarget as HTMLElement).getAttribute('data-prompt') || '';
+            if (prompt) {
+              handleStartChatWithPaperContext(prompt, true);
+            }
+          });
+        });
+        const chatForm = resEl.querySelector('#paperChatForm') as HTMLFormElement | null;
+        const chatInput = resEl.querySelector('#paperChatInput') as HTMLInputElement | null;
+        if (chatForm && chatInput) {
+          chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const val = chatInput.value.trim();
+            if (val) {
+              handleStartChatWithPaperContext(val, true);
+            }
+          });
         }
       })
     );
@@ -1200,7 +1370,7 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
                 className="go"
                 id="send"
                 aria-label="Send"
-                onClick={handleSendChat}
+                onClick={() => handleSendChat()}
               >
                 {busy ? '■' : '➤'}
               </button>
@@ -1210,6 +1380,20 @@ export const AiScholarTab: React.FC<AiScholarTabProps> = ({
 
         {/* PAPER CORRECTION */}
         <div className={`panel ${activeTab === 'paper' ? 'on' : ''}`} id="p-paper">
+          <div className="phead">
+            <b>Paper Correction</b>
+            <div className="phead-actions">
+              <button
+                type="button"
+                className="nc"
+                id="paperTopNewChat"
+                title="Start a new discussion with the examiner"
+                onClick={() => handleStartChatWithPaperContext()}
+              >
+                + New chat
+              </button>
+            </div>
+          </div>
           <div className="zones">
             <div
               className={`drop ${dragZone === 'a' ? 'on' : ''}`}

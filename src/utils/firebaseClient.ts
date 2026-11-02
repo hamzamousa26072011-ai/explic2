@@ -48,6 +48,8 @@ export const SCOPES = [
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/tasks.readonly',
 ];
 
 const app = initializeApp(firebaseConfig);
@@ -67,13 +69,14 @@ if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
     .catch(() => {});
 }
 
+const dbId =
+  (firebaseConfig as any).firestoreDatabaseId ||
+  'ai-studio-422fc515-75cf-46f0-b723-90499ca74ad1';
+
 export const db = initializeFirestore(
   app,
   { ignoreUndefinedProperties: true },
-  firebaseConfig.firestoreDatabaseId &&
-    firebaseConfig.firestoreDatabaseId !== '(default)'
-    ? firebaseConfig.firestoreDatabaseId
-    : undefined
+  dbId && dbId !== '(default)' ? dbId : undefined
 );
 
 export const auth = getAuth(app);
@@ -1054,3 +1057,185 @@ export async function exportTaskToGoogleCalendar(
   }
   return await res.json();
 }
+
+/**
+ * Fetch task lists from Google Tasks REST API
+ */
+export async function fetchGoogleTaskLists(
+  accessToken: string
+): Promise<Array<{ id: string; title: string }>> {
+  const res = await fetch('https://tasks.googleapis.com/tasks/v1/users/@me/lists', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error('Failed to fetch Google Tasks lists.');
+  }
+  const data = await res.json();
+  const items: any[] = data.items || [];
+  return items.map((l) => ({
+    id: l.id || '@default',
+    title: l.title || 'My Tasks',
+  }));
+}
+
+/**
+ * Fetch all study tasks across the user's Google Tasks lists
+ */
+export async function fetchGoogleTasks(
+  accessToken: string
+): Promise<StudyTask[]> {
+  const lists = await fetchGoogleTaskLists(accessToken);
+  const tasks: StudyTask[] = [];
+
+  const targetLists = lists.length > 0 ? lists.slice(0, 5) : [{ id: '@default', title: 'My Tasks' }];
+
+  await Promise.all(
+    targetLists.map(async (list) => {
+      try {
+        const res = await fetch(
+          `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(
+            list.id
+          )}/tasks?showCompleted=true&showHidden=true&maxResults=100`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const items: any[] = data.items || [];
+
+        for (const item of items) {
+          if (!item.title && !item.notes) continue;
+
+          let dueDate = new Date().toISOString().slice(0, 10);
+          let dueTime = '18:00';
+          if (item.due) {
+            const parsedDue = new Date(item.due);
+            if (!isNaN(parsedDue.getTime())) {
+              dueDate = parsedDue.toISOString().slice(0, 10);
+            }
+          }
+
+          let estMinutes = 45;
+          const estMatch = String(item.notes || '').match(/(\d+)\s*(?:mins?|minutes|m\b)/i);
+          if (estMatch) {
+            estMinutes = Math.min(300, Math.max(5, parseInt(estMatch[1], 10)));
+          }
+
+          tasks.push({
+            id: `gt-${list.id}-${item.id}`,
+            title: item.title || 'Untitled Task',
+            subject: list.title || 'Google Tasks',
+            dueDate,
+            dueTime,
+            priority: 'Medium',
+            estimatedMinutes: estMinutes,
+            completed: item.status === 'completed',
+            source: 'google_tasks',
+            googleTaskId: item.id,
+            googleTaskListId: list.id,
+            notes: item.notes || '',
+            alternateLink: item.webViewLink,
+          });
+        }
+      } catch (err) {
+        console.warn(`Error fetching tasks for list ${list.id}:`, err);
+      }
+    })
+  );
+
+  return tasks;
+}
+
+/**
+ * Creates a task in Google Tasks
+ */
+export async function createGoogleTask(
+  accessToken: string,
+  task: Omit<StudyTask, 'id'>,
+  listId = '@default'
+): Promise<{ id: string; listId: string }> {
+  let dueIso: string | undefined = undefined;
+  if (task.dueDate) {
+    const d = new Date(`${task.dueDate}T00:00:00.000Z`);
+    if (!isNaN(d.getTime())) {
+      dueIso = d.toISOString();
+    }
+  }
+
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: task.title,
+        notes: `[Explic Study OS] Subject: ${task.subject || 'General'} | Priority: ${task.priority} | Est: ${task.estimatedMinutes} mins`,
+        ...(dueIso ? { due: dueIso } : {}),
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData?.error?.message || 'Failed to create Google Task.');
+  }
+
+  const created = await res.json();
+  return { id: created.id, listId };
+}
+
+/**
+ * Updates a task status in Google Tasks
+ */
+export async function updateGoogleTaskStatus(
+  accessToken: string,
+  listId: string,
+  taskId: string,
+  completed: boolean
+): Promise<void> {
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        status: completed ? 'completed' : 'needsAction',
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    console.warn(`Failed to sync task status to Google Tasks:`, await res.text().catch(() => ''));
+  }
+}
+
+/**
+ * Deletes a task from Google Tasks (requires explicit user confirmation prior to calling)
+ */
+export async function deleteGoogleTask(
+  accessToken: string,
+  listId: string,
+  taskId: string
+): Promise<void> {
+  const res = await fetch(
+    `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  if (!res.ok && res.status !== 404) {
+    throw new Error('Failed to delete task from Google Tasks.');
+  }
+}
+

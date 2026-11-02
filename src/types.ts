@@ -127,10 +127,13 @@ export interface StudyTask {
   priority: 'Urgent' | 'High' | 'Medium' | 'Low';
   estimatedMinutes: number;
   completed: boolean;
-  source: 'manual' | 'classroom';
+  source: 'manual' | 'classroom' | 'google_tasks';
   courseName?: string;
   submissionState?: 'TURNED_IN' | 'RETURNED' | 'NEW';
   alternateLink?: string;
+  googleTaskId?: string;
+  googleTaskListId?: string;
+  notes?: string;
 }
 
 export interface DailyPlanTimeBlock {

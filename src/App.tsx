@@ -660,13 +660,13 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 z-10 pb-20 lg:pb-0">
         {/* Clean Minimalist Top Bar */}
         <header
-          className={`flex items-center justify-between gap-8 px-6 py-3.5 border-b sticky top-0 z-20 backdrop-blur-md ${
+          className={`flex items-center justify-between gap-3 sm:gap-8 px-3.5 sm:px-6 py-2.5 sm:py-3.5 border-b sticky top-0 z-20 backdrop-blur-md ${
             isLight
               ? 'bg-white/85 border-[#E2E8F0]'
               : 'bg-[#111827]/85 border-white/8'
           }`}
         >
-          <div className="lg:hidden">
+          <div className="lg:hidden shrink-0">
             <EngezBrandLogo theme={theme} />
           </div>
 
@@ -700,13 +700,13 @@ export default function App() {
             ))}
           </nav>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
             {profile.isGuest ? (
               <button
                 id="header-signin-btn"
                 type="button"
                 onClick={() => setIsAuthModalOpen(true)}
-                className={`px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-all whitespace-nowrap ${
+                className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl border text-[11px] sm:text-xs font-semibold inline-flex items-center gap-1.5 transition-all whitespace-nowrap ${
                   isLight
                     ? 'border-[#CBD5E1] bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#0F172A]'
                     : 'border-white/15 bg-white/5 hover:bg-white/10 text-white'
@@ -733,7 +733,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => handleSelectNavTab('scholar')}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
                 isLight
                   ? 'bg-[#0F172A] hover:bg-[#1E293B] text-white'
                   : 'bg-[#6366F1] hover:bg-[#4F46E5] text-white'
@@ -1044,7 +1044,7 @@ export default function App() {
       {/* Mobile Bottom Navigation Dock (< 1024px) */}
       <nav
         aria-label="Mobile Bottom Navigation"
-        className={`lg:hidden fixed bottom-0 inset-x-0 z-30 border-t px-2 py-1.5 flex items-center justify-around backdrop-blur-md ${
+        className={`lg:hidden fixed bottom-0 inset-x-0 z-30 border-t px-1 sm:px-2 pt-1 pb-[calc(env(safe-area-inset-bottom,0px)+6px)] flex items-center justify-between backdrop-blur-md shadow-lg ${
           isLight
             ? 'bg-white/95 border-[#E2E8F0]'
             : 'bg-[#111827]/95 border-white/10'
@@ -1065,18 +1065,18 @@ export default function App() {
               key={item.id}
               type="button"
               onClick={() => handleSelectNavTab(item.id)}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl text-[11px] font-semibold whitespace-nowrap ${
+              className={`flex-1 min-w-0 min-h-[44px] flex flex-col items-center justify-center py-1 px-0.5 rounded-lg text-[10px] sm:text-[11px] font-semibold transition-all ${
                 isActive
                   ? isLight
                     ? 'text-[#0F172A]'
                     : 'text-[#6366F1]'
                   : isLight
-                  ? 'text-[#64748B]'
-                  : 'text-[#94A3B8]'
+                  ? 'text-[#64748B] hover:text-[#0F172A]'
+                  : 'text-[#94A3B8] hover:text-white'
               }`}
             >
-              <Icon className="w-4 h-4 mb-0.5" />
-              <span>{item.shortLabel}</span>
+              <Icon className="w-4 h-4 mb-0.5 shrink-0" />
+              <span className="truncate max-w-full text-center leading-tight">{item.shortLabel}</span>
             </button>
           );
         })}

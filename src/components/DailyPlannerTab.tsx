@@ -21,6 +21,7 @@ import {
   Wand2,
   Lock,
   Table as TableIcon,
+  CheckSquare,
 } from 'lucide-react';
 import {
   DailyPlanTimeBlock,
@@ -44,6 +45,10 @@ interface DailyPlannerTabProps {
   onSyncClassroom: () => void;
   isSyncingClassroom: boolean;
   onExportToCalendar: (task: StudyTask) => Promise<void>;
+  onSyncGoogleTasks?: () => void;
+  isSyncingGoogleTasks?: boolean;
+  onExportToGoogleTasks?: (task: StudyTask) => Promise<void>;
+  onDeleteGoogleTask?: (task: StudyTask) => Promise<void>;
 }
 
 function formatDurationReadable(mins: number): string {
@@ -70,6 +75,10 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
   onSyncClassroom,
   isSyncingClassroom,
   onExportToCalendar,
+  onSyncGoogleTasks,
+  isSyncingGoogleTasks = false,
+  onExportToGoogleTasks,
+  onDeleteGoogleTask,
 }) => {
   const isLight = theme === 'warm';
 
@@ -110,13 +119,18 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<
-    'all' | 'pending' | 'completed' | 'classroom'
+    'all' | 'pending' | 'completed' | 'classroom' | 'google_tasks'
   >('all');
   const [calendarConfirmTask, setCalendarConfirmTask] =
     useState<StudyTask | null>(null);
   const [calendarExportNotice, setCalendarExportNotice] = useState<
     string | null
   >(null);
+  const [googleTasksConfirmTask, setGoogleTasksConfirmTask] =
+    useState<StudyTask | null>(null);
+  const [googleTaskDeleteConfirm, setGoogleTaskDeleteConfirm] =
+    useState<StudyTask | null>(null);
+  const [googleTasksNotice, setGoogleTasksNotice] = useState<string | null>(null);
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -459,10 +473,37 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
     setTimeout(() => setCalendarExportNotice(null), 3500);
   };
 
+  const handleConfirmGoogleTasksExport = async () => {
+    if (!googleTasksConfirmTask || !onExportToGoogleTasks) return;
+    const taskToExport = googleTasksConfirmTask;
+    setGoogleTasksConfirmTask(null);
+    await onExportToGoogleTasks(taskToExport);
+    setGoogleTasksNotice(
+      `Added "${taskToExport.title}" to your Google Tasks.`
+    );
+    setTimeout(() => setGoogleTasksNotice(null), 3500);
+  };
+
+  const handleConfirmGoogleTaskDelete = async () => {
+    if (!googleTaskDeleteConfirm) return;
+    const taskToDelete = googleTaskDeleteConfirm;
+    setGoogleTaskDeleteConfirm(null);
+    if (onDeleteGoogleTask) {
+      await onDeleteGoogleTask(taskToDelete);
+    } else if (onDeleteTask) {
+      onDeleteTask(taskToDelete.id);
+    }
+    setGoogleTasksNotice(
+      `Deleted "${taskToDelete.title}" from Google Tasks.`
+    );
+    setTimeout(() => setGoogleTasksNotice(null), 3500);
+  };
+
   const filteredTasks = tasks.filter((t) => {
     if (statusFilter === 'pending' && t.completed) return false;
     if (statusFilter === 'completed' && !t.completed) return false;
     if (statusFilter === 'classroom' && t.source !== 'classroom') return false;
+    if (statusFilter === 'google_tasks' && t.source !== 'google_tasks') return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       return (
@@ -502,18 +543,54 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onSyncClassroom}
-          disabled={isSyncingClassroom}
-          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all whitespace-nowrap self-start sm:self-auto ${primaryBtn}`}
-        >
-          <RefreshCw
-            className={`w-3.5 h-3.5 ${isSyncingClassroom ? 'animate-spin' : ''}`}
-          />
-          {isSyncingClassroom ? 'Syncing Classroom...' : 'Sync Google Classroom'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {onSyncGoogleTasks && (
+            <button
+              id="sync-google-tasks-btn"
+              type="button"
+              onClick={onSyncGoogleTasks}
+              disabled={isSyncingGoogleTasks}
+              className={`inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold border transition-all whitespace-nowrap ${
+                isLight
+                  ? 'border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-[#0F172A]'
+                  : 'border-white/15 bg-white/5 hover:bg-white/10 text-white'
+              }`}
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-blue-500 ${isSyncingGoogleTasks ? 'animate-spin' : ''}`}
+              />
+              {isSyncingGoogleTasks ? 'Syncing Tasks...' : 'Sync Google Tasks'}
+            </button>
+          )}
+
+          <button
+            id="sync-google-classroom-btn"
+            type="button"
+            onClick={onSyncClassroom}
+            disabled={isSyncingClassroom}
+            className={`inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${primaryBtn}`}
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${isSyncingClassroom ? 'animate-spin' : ''}`}
+            />
+            {isSyncingClassroom ? 'Syncing Classroom...' : 'Sync Google Classroom'}
+          </button>
+        </div>
       </div>
+
+      {calendarExportNotice && (
+        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span>{calendarExportNotice}</span>
+        </div>
+      )}
+
+      {googleTasksNotice && (
+        <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-medium flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-blue-500 shrink-0" />
+          <span>{googleTasksNotice}</span>
+        </div>
+      )}
 
       {!isSignedIn && onRequireSignIn && (
         <div
@@ -772,7 +849,7 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
       <section className={`rounded-2xl border p-6 space-y-5 ${cardSurface}`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-current/5">
           <div className="flex flex-wrap items-center gap-1.5">
-            {(['all', 'pending', 'completed', 'classroom'] as const).map(
+            {(['all', 'pending', 'completed', 'classroom', 'google_tasks'] as const).map(
               (f) => (
                 <button
                   key={f}
@@ -790,7 +867,9 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
                     ? 'Pending'
                     : f === 'completed'
                     ? 'Completed'
-                    : 'Classroom'}
+                    : f === 'classroom'
+                    ? 'Classroom'
+                    : 'Google Tasks'}
                 </button>
               )
             )}
@@ -918,6 +997,18 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="inline-flex items-center justify-end gap-1.5">
+                        {task.source === 'google_tasks' && (
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
+                              isLight
+                                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                                : 'bg-blue-950/40 border-blue-500/30 text-blue-300'
+                            }`}
+                          >
+                            <CheckSquare className="w-3 h-3 text-blue-500" />
+                            Google Tasks
+                          </span>
+                        )}
                         {task.alternateLink && (
                           <a
                             href={task.alternateLink}
@@ -929,9 +1020,24 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
                                 : 'border-white/10 hover:bg-white/5'
                             }`}
                           >
-                            Classroom
+                            {task.source === 'google_tasks' ? 'Tasks' : 'Classroom'}
                             <ExternalLink className="w-3 h-3" />
                           </a>
+                        )}
+                        {task.source !== 'google_tasks' && onExportToGoogleTasks && (
+                          <button
+                            type="button"
+                            onClick={() => setGoogleTasksConfirmTask(task)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-medium whitespace-nowrap ${
+                              isLight
+                                ? 'border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                                : 'border-white/10 hover:bg-white/5'
+                            }`}
+                            title="Export to Google Tasks"
+                          >
+                            <CheckSquare className="w-3 h-3 text-blue-500" />
+                            Tasks
+                          </button>
                         )}
                         <button
                           type="button"
@@ -945,10 +1051,16 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
                           <CalendarPlus className="w-3 h-3" />
                           Calendar
                         </button>
-                        {onDeleteTask && (
+                        {(onDeleteTask || onDeleteGoogleTask) && (
                           <button
                             type="button"
-                            onClick={() => onDeleteTask(task.id)}
+                            onClick={() => {
+                              if (task.source === 'google_tasks') {
+                                setGoogleTaskDeleteConfirm(task);
+                              } else if (onDeleteTask) {
+                                onDeleteTask(task.id);
+                              }
+                            }}
                             aria-label={`Delete ${task.title}`}
                             className="p-1.5 rounded-lg opacity-60 hover:opacity-100 hover:text-red-500 transition-colors"
                           >
@@ -1020,6 +1132,85 @@ export const DailyPlannerTab: React.FC<DailyPlannerTabProps> = ({
                 className={`px-4 py-2 rounded-xl text-xs font-semibold ${primaryBtn}`}
               >
                 Confirm Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {googleTasksConfirmTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tasks-export-confirm-title"
+        >
+          <div className={`max-w-md w-full rounded-2xl border p-6 ${cardSurface}`}>
+            <div className="flex items-center gap-2 mb-2">
+              <CheckSquare className="w-5 h-5 text-blue-500" />
+              <h3 id="tasks-export-confirm-title" className="text-base font-bold">
+                Export to Google Tasks
+              </h3>
+            </div>
+            <p className={`text-xs leading-relaxed ${mutedText}`}>
+              Add <strong>&ldquo;{googleTasksConfirmTask.title}&rdquo;</strong> ({formatDurationReadable(googleTasksConfirmTask.estimatedMinutes)}) to your Google Tasks account?
+            </p>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setGoogleTasksConfirmTask(null)}
+                className={`px-3.5 py-2 rounded-xl border text-xs font-semibold ${
+                  isLight
+                    ? 'border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                    : 'border-white/10 hover:bg-white/5'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmGoogleTasksExport}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold ${primaryBtn}`}
+              >
+                Confirm Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {googleTaskDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tasks-delete-confirm-title"
+        >
+          <div className={`max-w-md w-full rounded-2xl border p-6 ${cardSurface}`}>
+            <h3 id="tasks-delete-confirm-title" className="text-base font-bold text-red-600 dark:text-red-400">
+              Delete Task from Google Tasks
+            </h3>
+            <p className={`text-xs mt-2 leading-relaxed ${mutedText}`}>
+              Are you sure you want to delete <strong>&ldquo;{googleTaskDeleteConfirm.title}&rdquo;</strong> from your Google Tasks account? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setGoogleTaskDeleteConfirm(null)}
+                className={`px-3.5 py-2 rounded-xl border text-xs font-semibold ${
+                  isLight
+                    ? 'border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                    : 'border-white/10 hover:bg-white/5'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmGoogleTaskDelete}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-700 text-white"
+              >
+                Confirm Delete
               </button>
             </div>
           </div>
