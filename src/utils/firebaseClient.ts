@@ -3,6 +3,9 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signInWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -148,6 +151,35 @@ export function getAccessToken(): string | null {
 export function initAuth(
   onUserChange: (user: User | null, accessToken: string | null) => void
 ): Unsubscribe {
+  if (typeof window !== 'undefined') {
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential?.accessToken) {
+            cachedAccessToken = credential.accessToken;
+          }
+          const friendCode = generateDeterministicFriendCode(result.user.uid);
+          try {
+            localStorage.setItem(
+              'explic_verified_session',
+              JSON.stringify({
+                uid: result.user.uid,
+                email: result.user.email || 'scholar@google.com',
+                displayName: result.user.displayName || 'Google Scholar',
+                friendCode,
+                verifiedAt: new Date().toISOString(),
+              })
+            );
+          } catch {}
+          onUserChange(result.user, cachedAccessToken);
+        }
+      })
+      .catch((err) => {
+        console.warn('Redirect sign-in resolution:', err?.message || err);
+      });
+  }
+
   return onAuthStateChanged(auth, (user) => {
     if (!user && !isSigningIn) {
       cachedAccessToken = null;
@@ -167,7 +199,17 @@ export async function signInWithGoogleWorkspace(
     const provider = includeWorkspaceScopes
       ? workspaceGoogleProvider
       : googleProvider;
-    const result = await signInWithPopup(auth, provider);
+    let result: any = null;
+    try {
+      result = await signInWithPopup(auth, provider);
+    } catch (popupErr: any) {
+      const code = String(popupErr?.code || popupErr?.message || '');
+      if (code.includes('popup-blocked')) {
+        await signInWithRedirect(auth, provider);
+        return { user: auth.currentUser!, accessToken: null };
+      }
+      throw popupErr;
+    }
     const credential = GoogleAuthProvider.credentialFromResult(result);
     cachedAccessToken = credential?.accessToken || null;
     const friendCode = generateDeterministicFriendCode(result.user.uid);
