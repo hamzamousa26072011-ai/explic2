@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <!-- Background Gradients -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#080C14" />
+      <stop offset="50%" stop-color="#0B1120" />
+      <stop offset="100%" stop-color="#070A10" />
+    </linearGradient>
+
+    <radialGradient id="indigoGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1060 120) rotate(90) scale(420 540)">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.32" />
+      <stop offset="50%" stop-color="#4F46E5" stop-opacity="0.12" />
+      <stop offset="100%" stop-color="#4F46E5" stop-opacity="0" />
+    </radialGradient>
+
+    <radialGradient id="emeraldGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(140 540) rotate(90) scale(360 480)">
+      <stop offset="0%" stop-color="#10B981" stop-opacity="0.22" />
+      <stop offset="60%" stop-color="#059669" stop-opacity="0.06" />
+      <stop offset="100%" stop-color="#059669" stop-opacity="0" />
+    </radialGradient>
+
+    <linearGradient id="cardGrad" x1="0" y1="0" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#161F30" stop-opacity="0.88" />
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0.94" />
+    </linearGradient>
+
+    <linearGradient id="cardBorder" x1="0" y1="0" x2="400" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.2" />
+      <stop offset="50%" stop-color="#6366F1" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.08" />
+    </linearGradient>
+
+    <filter id="cardShadow" x="-20" y="-20" width="440" height="420" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.6" />
+    </filter>
+
+    <style>
+      .font-sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+      .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    </style>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="1200" height="630" fill="url(#bgGrad)" />
+
+  <!-- Ambient Ambient Glows -->
+  <rect width="1200" height="630" fill="url(#indigoGlow)" />
+  <rect width="1200" height="630" fill="url(#emeraldGlow)" />
+
+  <!-- Outer Elegant Border -->
+  <rect x="24" y="24" width="1152" height="582" rx="24" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="1.5" fill="none" />
+
+  <!-- LEFT SECTION: Brand & Pitch -->
+
+  <!-- Logo Symbol [E] -->
+  <g transform="translate(72, 68)">
+    <rect width="56" height="56" rx="14" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="1.5" />
+    <path d="M 20 18 L 36 18 M 20 28 L 32 28 M 20 38 L 36 38 M 20 18 L 20 38" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Brand Wordmark -->
+  <text x="144" y="108" class="font-sans" font-size="34" font-weight="800" fill="#FFFFFF" letter-spacing="0.06em">EXPLIC</text>
+
+  <!-- Tagline Pill -->
+  <g transform="translate(310, 78)">
+    <rect width="232" height="36" rx="18" fill="#6366F1" fill-opacity="0.15" stroke="#6366F1" stroke-opacity="0.35" stroke-width="1" />
+    <circle cx="18" cy="18" r="4" fill="#10B981" />
+    <text x="32" y="23" class="font-sans" font-size="12" font-weight="700" fill="#A5B4FC" letter-spacing="0.08em">AI EXAMINER &amp; STUDY OS</text>
+  </g>
+
+  <!-- Main Headline -->
+  <text x="72" y="196" class="font-sans" font-size="44" font-weight="800" fill="#FFFFFF" letter-spacing="-0.02em">
+    Master Every Exam with AI.
+  </text>
+
+  <!-- Subtitle -->
+  <text x="72" y="238" class="font-sans" font-size="20" font-weight="400" fill="#94A3B8" letter-spacing="-0.01em">
+    Line-by-line mark scheme verification, mechanical focus timer, and study OS.
+  </text>
+
+  <!-- Feature List -->
+  <g transform="translate(72, 285)">
+    <!-- Item 1 -->
+    <g transform="translate(0, 0)">
+      <circle cx="14" cy="14" r="14" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.3" stroke-width="1" />
+      <path d="M 9 14 L 13 18 L 19 10" stroke="#10B981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+      <text x="40" y="19" class="font-sans" font-size="18" font-weight="700" fill="#FFFFFF">AI Paper Examiner</text>
+      <text x="210" y="19" class="font-sans" font-size="17" font-weight="400" fill="#CBD5E1">— Instant CAIE &amp; Edexcel mark scheme grading</text>
+    </g>
+
+    <!-- Item 2 -->
+    <g transform="translate(0, 48)">
+      <circle cx="14" cy="14" r="14" fill="#6366F1" fill-opacity="0.15" stroke="#6366F1" stroke-opacity="0.3" stroke-width="1" />
+      <path d="M 14 8 L 14 14 L 18 17" stroke="#818CF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+      <circle cx="14" cy="14" r="7" stroke="#818CF8" stroke-width="1.5" fill="none" />
+      <text x="40" y="19" class="font-sans" font-size="18" font-weight="700" fill="#FFFFFF">Split-Flap Focus Timer</text>
+      <text x="248" y="19" class="font-sans" font-size="17" font-weight="400" fill="#CBD5E1">— Ambient rain soundscapes &amp; study flow</text>
+    </g>
+
+    <!-- Item 3 -->
+    <g transform="translate(0, 96)">
+      <circle cx="14" cy="14" r="14" fill="#F59E0B" fill-opacity="0.15" stroke="#F59E0B" stroke-opacity="0.3" stroke-width="1" />
+      <path d="M 8 11 L 20 11 M 8 16 L 16 16 M 8 7 L 20 7" stroke="#FBBF24" stroke-width="2" stroke-linecap="round" fill="none" />
+      <text x="40" y="19" class="font-sans" font-size="18" font-weight="700" fill="#FFFFFF">Intelligent Study Planner</text>
+      <text x="264" y="19" class="font-sans" font-size="17" font-weight="400" fill="#CBD5E1">— Google Classroom &amp; Calendar sync</text>
+    </g>
+  </g>
+
+  <!-- Curricula Banner Box -->
+  <g transform="translate(72, 442)">
+    <rect width="600" height="54" rx="14" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1" />
+    <text x="20" y="32" class="font-sans" font-size="14" font-weight="600" fill="#94A3B8">
+      Curricula: <tspan fill="#F8FAFC">Cambridge CAIE</tspan> · <tspan fill="#F8FAFC">Pearson Edexcel</tspan> · <tspan fill="#F8FAFC">Oxford AQA</tspan> · <tspan fill="#F8FAFC">IB</tspan> · <tspan fill="#F8FAFC">University</tspan>
+    </text>
+  </g>
+
+  <!-- Footer Link & Badge -->
+  <g transform="translate(72, 545)">
+    <text x="0" y="16" class="font-sans" font-size="16" font-weight="800" fill="#A5B4FC">explic.online</text>
+    <text x="110" y="16" class="font-sans" font-size="14" font-weight="500" fill="#64748B">· The Academic Operating System for Students Worldwide</text>
+  </g>
+
+
+  <!-- RIGHT SECTION: Floating Evaluation Report Card Mockup -->
+  <g transform="translate(720, 100)" filter="url(#cardShadow)">
+    <!-- Card Frame -->
+    <rect width="408" height="428" rx="22" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.5" />
+
+    <!-- Card Header -->
+    <text x="28" y="44" class="font-mono" font-size="11" font-weight="700" fill="#64748B" letter-spacing="0.1em">EXAM EVALUATION RESULT</text>
+    
+    <g transform="translate(300, 28)">
+      <rect width="78" height="24" rx="12" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.3" stroke-width="1" />
+      <text x="14" y="16" class="font-mono" font-size="11" font-weight="700" fill="#34D399">VERIFIED</text>
+    </g>
+
+    <!-- Score Big Display -->
+    <text x="28" y="118" class="font-sans" font-size="58" font-weight="900" fill="#FFFFFF" letter-spacing="-0.03em">92%</text>
+    <text x="162" y="96" class="font-sans" font-size="22" font-weight="800" fill="#10B981">Outstanding</text>
+    <text x="162" y="122" class="font-sans" font-size="14" font-weight="500" fill="#94A3B8">74 / 80 Marks Awarded</text>
+
+    <!-- Divider -->
+    <line x1="28" y1="146" x2="380" y2="146" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="1" />
+
+    <!-- Breakdown items -->
+    <g transform="translate(28, 168)">
+      <!-- Item 1 -->
+      <rect width="352" height="42" rx="10" fill="#10B981" fill-opacity="0.08" stroke="#10B981" stroke-opacity="0.18" stroke-width="1" />
+      <text x="14" y="26" class="font-sans" font-size="13" font-weight="700" fill="#34D399">✓ Q1-Q6:</text>
+      <text x="82" y="26" class="font-sans" font-size="13" font-weight="500" fill="#E2E8F0">All marking points earned (+24/24)</text>
+
+      <!-- Item 2 -->
+      <g transform="translate(0, 52)">
+        <rect width="352" height="42" rx="10" fill="#F59E0B" fill-opacity="0.08" stroke="#F59E0B" stroke-opacity="0.18" stroke-width="1" />
+        <text x="14" y="26" class="font-sans" font-size="13" font-weight="700" fill="#FBBF24">! Q7:</text>
+        <text x="60" y="26" class="font-sans" font-size="13" font-weight="500" fill="#E2E8F0">Method marks awarded, units missing (−2)</text>
+      </g>
+
+      <!-- Item 3 -->
+      <g transform="translate(0, 104)">
+        <rect width="352" height="42" rx="10" fill="#6366F1" fill-opacity="0.08" stroke="#6366F1" stroke-opacity="0.18" stroke-width="1" />
+        <text x="14" y="26" class="font-sans" font-size="13" font-weight="700" fill="#A5B4FC">★ Q8-Q14:</text>
+        <text x="94" y="26" class="font-sans" font-size="13" font-weight="500" fill="#E2E8F0">Model explanation &amp; formula steps verified</text>
+      </g>
+    </g>
+
+    <!-- Mini Focus Timer Strip inside card -->
+    <g transform="translate(28, 342)">
+      <rect width="352" height="58" rx="12" fill="#090D16" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="1" />
+      
+      <!-- Mini Flip Card 1 -->
+      <rect x="14" y="10" width="34" height="38" rx="6" fill="#1E293B" />
+      <line x1="14" y1="29" x2="48" y2="29" stroke="#090D16" stroke-width="1.5" />
+      <text x="21" y="34" class="font-mono" font-size="15" font-weight="800" fill="#FFFFFF">00</text>
+
+      <text x="52" y="34" class="font-mono" font-size="16" font-weight="800" fill="#64748B">:</text>
+
+      <!-- Mini Flip Card 2 -->
+      <rect x="62" y="10" width="34" height="38" rx="6" fill="#1E293B" />
+      <line x1="62" y1="29" x2="96" y2="29" stroke="#090D16" stroke-width="1.5" />
+      <text x="69" y="34" class="font-mono" font-size="15" font-weight="800" fill="#FFFFFF">45</text>
+
+      <text x="100" y="34" class="font-mono" font-size="16" font-weight="800" fill="#64748B">:</text>
+
+      <!-- Mini Flip Card 3 -->
+      <rect x="110" y="10" width="34" height="38" rx="6" fill="#1E293B" />
+      <line x1="110" y1="29" x2="144" y2="29" stroke="#090D16" stroke-width="1.5" />
+      <text x="117" y="34" class="font-mono" font-size="15" font-weight="800" fill="#FFFFFF">00</text>
+
+      <text x="160" y="27" class="font-sans" font-size="12" font-weight="700" fill="#F8FAFC">Mechanical Focus Session</text>
+      <text x="160" y="43" class="font-sans" font-size="11" font-weight="500" fill="#10B981">● Rain Soundscape Active</text>
+    </g>
+  </g>
+</svg>

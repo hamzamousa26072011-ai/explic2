@@ -5415,6 +5415,140 @@ app.get('/healthz', (_req, res) => {
   res.status(200).send('OK');
 });
 
+// OpenGraph & Social Share Preview Image Endpoints
+let cachedOgPngBuffer: Buffer | null = null;
+
+function ensureOgPreviewPng(): Buffer {
+  if (cachedOgPngBuffer && cachedOgPngBuffer.length > 0) return cachedOgPngBuffer;
+
+  const optPath = '/tmp/explic_og_preview_opt.png';
+  if (fs.existsSync(optPath)) {
+    try {
+      cachedOgPngBuffer = fs.readFileSync(optPath);
+      return cachedOgPngBuffer;
+    } catch {}
+  }
+
+  try {
+    const { execSync } = require('child_process');
+    execSync(`python3 -c "
+import subprocess
+cmd = [
+    'convert', '-size', '1200x630', 'xc:#090D16',
+    '-fill', '#4F46E5', '-draw', 'circle 1050,120 1050,280', '-blur', '0x90',
+    '-fill', '#10B981', '-draw', 'circle 150,520 150,660', '-blur', '0x80',
+    '-fill', 'rgba(9,13,22,0.85)', '-draw', 'rectangle 0,0 1200,630',
+    '-stroke', 'rgba(255,255,255,0.12)', '-fill', 'none', '-draw', 'roundrectangle 24,24 1176,606 20,20',
+    '-stroke', 'rgba(255,255,255,0.2)', '-fill', 'rgba(255,255,255,0.06)',
+    '-draw', 'roundrectangle 70,70 126,126 14,14',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '-stroke', 'none', '-fill', '#FFFFFF', '-pointsize', '28',
+    '-draw', 'text 86,108 \\\"E\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '-fill', '#FFFFFF', '-pointsize', '34',
+    '-draw', 'text 142,108 \\\"EXPLIC\\\"',
+    '-stroke', 'rgba(99,102,241,0.4)', '-fill', 'rgba(99,102,241,0.18)',
+    '-draw', 'roundrectangle 300,78 540,118 20,20',
+    '-stroke', 'none', '-fill', '#818CF8', '-pointsize', '13',
+    '-draw', 'text 320,103 \\\"AI EXAMINER & STUDY OS\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '-fill', '#FFFFFF', '-pointsize', '44',
+    '-draw', 'text 70,195 \\\"Master Every Exam with AI.\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '-fill', '#94A3B8', '-pointsize', '20',
+    '-draw', 'text 70,235 \\\"Line-by-line mark scheme verification, mechanical focus timer, and study OS.\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '-fill', '#10B981', '-pointsize', '18',
+    '-draw', 'text 70,305 \\\"[+]\\\"',
+    '-fill', '#E2E8F0', '-pointsize', '18',
+    '-draw', 'text 105,305 \\\"AI Paper Examiner - Instant marking against official CAIE & Edexcel schemes\\\"',
+    '-fill', '#6366F1', '-pointsize', '18',
+    '-draw', 'text 70,350 \\\"[*]\\\"',
+    '-fill', '#E2E8F0', '-pointsize', '18',
+    '-draw', 'text 105,350 \\\"Mechanical Flip Timer - Ambient rain soundscapes & full-screen study flow\\\"',
+    '-fill', '#F59E0B', '-pointsize', '18',
+    '-draw', 'text 70,395 \\\"[^]\\\"',
+    '-fill', '#E2E8F0', '-pointsize', '18',
+    '-draw', 'text 105,395 \\\"Intelligent Study Planner - Google Classroom coursework & calendar sync\\\"',
+    '-stroke', 'rgba(255,255,255,0.08)', '-fill', 'rgba(255,255,255,0.03)',
+    '-draw', 'roundrectangle 70,440 680,500 12,12',
+    '-stroke', 'none', '-fill', '#94A3B8', '-pointsize', '14',
+    '-draw', 'text 90,475 \\\"Supported: Cambridge CAIE · Pearson Edexcel · Oxford AQA · IB · Uni\\\"',
+    '-stroke', 'rgba(255,255,255,0.15)', '-fill', 'rgba(17,24,39,0.92)',
+    '-draw', 'roundrectangle 720,160 1120,490 20,20',
+    '-stroke', 'none', '-fill', '#64748B', '-pointsize', '12',
+    '-draw', 'text 750,200 \\\"EXAM EVALUATION RESULT\\\"',
+    '-fill', '#10B981', '-pointsize', '13',
+    '-draw', 'text 990,200 \\\"VERIFIED\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '-fill', '#FFFFFF', '-pointsize', '56',
+    '-draw', 'text 750,270 \\\"92%\\\"',
+    '-fill', '#10B981', '-pointsize', '20',
+    '-draw', 'text 880,250 \\\"Outstanding\\\"',
+    '-fill', '#94A3B8', '-pointsize', '14',
+    '-draw', 'text 880,275 \\\"74 / 80 Marks Awarded\\\"',
+    '-stroke', 'rgba(255,255,255,0.1)', '-draw', 'line 750,305 1090,305',
+    '-stroke', 'none', '-fill', '#10B981', '-pointsize', '14',
+    '-draw', 'text 750,340 \\\"[ok]\\\"',
+    '-fill', '#E2E8F0', '-pointsize', '13',
+    '-draw', 'text 790,340 \\\"Q1 to Q6: All marking points earned (+24/24)\\\"',
+    '-fill', '#F59E0B', '-pointsize', '14',
+    '-draw', 'text 750,380 \\\"[mid]\\\"',
+    '-fill', '#E2E8F0', '-pointsize', '13',
+    '-draw', 'text 790,380 \\\"Q7: Method marks awarded, units missing (-2)\\\"',
+    '-fill', '#6366F1', '-pointsize', '14',
+    '-draw', 'text 750,420 \\\"[os]\\\"',
+    '-fill', '#E2E8F0', '-pointsize', '13',
+    '-draw', 'text 790,420 \\\"Full model answers & revision checklist ready\\\"',
+    '-stroke', 'rgba(99,102,241,0.25)', '-fill', 'rgba(99,102,241,0.12)',
+    '-draw', 'roundrectangle 750,440 1090,475 8,8',
+    '-stroke', 'none', '-fill', '#A5B4FC', '-pointsize', '12',
+    '-draw', 'text 780,462 \\\"Line-by-line mark scheme breakdown available\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+    '-fill', '#64748B', '-pointsize', '15',
+    '-draw', 'text 70,555 \\\"explic.online\\\"',
+    '-font', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '-fill', '#475569', '-pointsize', '14',
+    '-draw', 'text 180,555 \\\"| The Academic Operating System for Students Worldwide\\\"',
+    '-strip', '-depth', '8',
+    '${optPath}'
+]
+subprocess.run(cmd, check=True)
+"`);
+    cachedOgPngBuffer = fs.readFileSync(optPath);
+    return cachedOgPngBuffer;
+  } catch (err) {
+    console.warn('Could not generate dynamic OG PNG, using fallback:', err);
+    return Buffer.alloc(0);
+  }
+}
+
+app.get(['/og-preview.png', '/og-image.png'], (_req, res) => {
+  const buf = ensureOgPreviewPng();
+  if (buf && buf.length > 0) {
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Length', String(buf.length));
+    res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+    return res.end(buf);
+  }
+  const svgPath = path.join(process.cwd(), 'public', 'og-preview.svg');
+  if (fs.existsSync(svgPath)) {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    return res.sendFile(svgPath);
+  }
+  return res.status(404).end();
+});
+
+app.get(['/og-preview.svg', '/og-image.svg'], (_req, res) => {
+  const svgPath = path.join(process.cwd(), 'public', 'og-preview.svg');
+  if (fs.existsSync(svgPath)) {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+    return res.sendFile(svgPath);
+  }
+  return res.status(404).end();
+});
+
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
     const distPath = path.join(process.cwd(), 'dist');
