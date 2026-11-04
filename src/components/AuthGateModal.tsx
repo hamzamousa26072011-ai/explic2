@@ -16,7 +16,7 @@ interface AuthGateModalProps {
   theme: ThemeMode;
   onClose: () => void;
   onContinueAsGuest: () => void;
-  onGoogleSignIn: () => Promise<void>;
+  onGoogleSignIn: (email?: string, displayName?: string) => Promise<void>;
   onEmailAuth: (params: {
     mode: 'login' | 'register';
     email: string;
@@ -39,17 +39,20 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [customGoogleEmail, setCustomGoogleEmail] = useState('');
+  const [isSwitchingGoogle, setIsSwitchingGoogle] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleGoogleClick = async () => {
+  const handleGoogleClick = async (specifiedEmail?: string) => {
     setErrorMessage(null);
     setIsGoogleLoading(true);
     try {
-      await onGoogleSignIn();
+      const emailToUse = specifiedEmail || (customGoogleEmail.trim() ? customGoogleEmail.trim() : undefined);
+      await onGoogleSignIn(emailToUse);
     } catch (err) {
       setErrorMessage(
         err instanceof Error
@@ -182,41 +185,120 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
         </div>
 
         {/* Option 1: Continue with Google */}
-        <button
-          id="auth-google-signin-btn"
-          type="button"
-          onClick={handleGoogleClick}
-          disabled={isGoogleLoading || isLoading}
-          className={`w-full py-3 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2.5 transition-all ${
-            isLight
-              ? 'bg-white border-[#CBD5E1] hover:bg-[#F8FAFC] text-[#0F172A]'
-              : 'bg-[#090D16] border-white/15 hover:bg-white/5 text-white'
-          }`}
-        >
-          {isGoogleLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+        <div className="space-y-2">
+          {!isSwitchingGoogle ? (
+            <>
+              <button
+                id="auth-google-signin-btn"
+                type="button"
+                onClick={() => handleGoogleClick()}
+                disabled={isGoogleLoading || isLoading}
+                className={`w-full py-3 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2.5 transition-all ${
+                  isLight
+                    ? 'bg-white border-[#CBD5E1] hover:bg-[#F8FAFC] text-[#0F172A] shadow-xs hover:border-[#94A3B8]'
+                    : 'bg-[#090D16] border-white/15 hover:bg-white/5 text-white'
+                }`}
+              >
+                {isGoogleLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.08.72-2.45 1.16-4.22 1.16-3.24 0-5.98-2.18-6.96-5.12H1.05v3.14C3.06 21.2 7.22 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.04 14.03c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.33H1.05C.38 8.04 0 9.97 0 12s.38 3.96 1.05 5.67l3.99-3.64z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.8 0 3.41.62 4.68 1.84l3.5-3.5C18.07 1.14 15.3 0 12 0 7.22 0 3.06 2.8 1.05 6.33l3.99 3.14c.98-2.94 3.72-5.12 6.96-5.12z"
+                    />
+                  </svg>
+                )}
+                <span>
+                  {isGoogleLoading ? 'Connecting Google Account...' : 'Continue with Google'}
+                </span>
+              </button>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsSwitchingGoogle(true)}
+                  className={`text-[11px] hover:underline ${mutedText}`}
+                >
+                  Use a specific Google email
+                </button>
+              </div>
+            </>
           ) : (
-            <svg className="w-4 h-4" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+            <div
+              className={`p-3 rounded-2xl border space-y-2.5 ${
+                isLight ? 'bg-[#F8FAFC] border-[#E2E8F0]' : 'bg-[#090D16] border-white/10'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold flex items-center gap-1.5 text-blue-500">
+                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.08.72-2.45 1.16-4.22 1.16-3.24 0-5.98-2.18-6.96-5.12H1.05v3.14C3.06 21.2 7.22 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.04 14.03c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.33H1.05C.38 8.04 0 9.97 0 12s.38 3.96 1.05 5.67l3.99-3.64z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.8 0 3.41.62 4.68 1.84l3.5-3.5C18.07 1.14 15.3 0 12 0 7.22 0 3.06 2.8 1.05 6.33l3.99 3.14c.98-2.94 3.72-5.12 6.96-5.12z"
+                    />
+                  </svg>
+                  Google Account
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsSwitchingGoogle(false)}
+                  className={`text-[11px] underline ${mutedText}`}
+                >
+                  Cancel
+                </button>
+              </div>
+              <input
+                type="email"
+                aria-label="Google email address"
+                value={customGoogleEmail}
+                onChange={(e) => setCustomGoogleEmail(e.target.value)}
+                placeholder="name@gmail.com"
+                className={`w-full px-3 py-2 rounded-xl border text-xs outline-none transition-colors ${inputSurface}`}
               />
-              <path
-                fill="#34A853"
-                d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.08.72-2.45 1.16-4.22 1.16-3.24 0-5.98-2.18-6.96-5.12H1.05v3.14C3.06 21.2 7.22 24 12 24z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.04 14.03c-.25-.72-.38-1.49-.38-2.28s.13-1.56.38-2.28V6.33H1.05C.38 8.04 0 9.97 0 12s.38 3.96 1.05 5.67l3.99-3.64z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 4.75c1.8 0 3.41.62 4.68 1.84l3.5-3.5C18.07 1.14 15.3 0 12 0 7.22 0 3.06 2.8 1.05 6.33l3.99 3.14c.98-2.94 3.72-5.12 6.96-5.12z"
-              />
-            </svg>
+              <button
+                type="button"
+                onClick={() => handleGoogleClick(customGoogleEmail)}
+                disabled={isGoogleLoading || !customGoogleEmail.includes('@')}
+                className={`w-full py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  isLight
+                    ? 'bg-[#0F172A] hover:bg-[#1E293B] text-white disabled:opacity-50'
+                    : 'bg-[#6366F1] hover:bg-[#4F46E5] text-white disabled:opacity-50'
+                }`}
+              >
+                {isGoogleLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <span>Continue with this Google Account</span>
+                )}
+              </button>
+            </div>
           )}
-          <span>Continue with Google</span>
-        </button>
+        </div>
 
         <div className="relative flex items-center justify-center pt-1">
           <div className="border-t border-current/10 w-full" />

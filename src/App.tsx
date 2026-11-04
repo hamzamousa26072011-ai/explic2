@@ -479,13 +479,13 @@ export default function App() {
             setActiveTab('dashboard');
           }
         }}
-        onGoogleSignIn={async () => {
-          const res = await signInWithGoogleWorkspace();
+        onGoogleSignIn={async (explicitEmail?: string, displayName?: string) => {
+          const res = await signInWithGoogleWorkspace(false, explicitEmail);
           if (res.user) {
             await hydrateUserSession({
               uid: res.user.uid,
-              email: res.user.email || '',
-              displayName: res.user.displayName || undefined,
+              email: res.user.email || explicitEmail || '',
+              displayName: res.user.displayName || displayName || undefined,
             });
             setIsAuthModalOpen(false);
           }

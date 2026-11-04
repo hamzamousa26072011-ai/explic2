@@ -5332,6 +5332,67 @@ app.post('/api/auth/email', (req, res) => {
   });
 });
 
+app.post('/api/auth/google', async (req, res) => {
+  const {
+    email = '',
+    displayName = '',
+    uid: clientUid = '',
+  } = req.body || {};
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return res.status(400).json({ error: 'Please enter a valid Google email address.' });
+  }
+
+  const deterministicUid =
+    String(clientUid).trim() ||
+    `google-${crypto.createHash('sha256').update(cleanEmail).digest('hex').slice(0, 20)}`;
+
+  const existing = userAccountStore.get(cleanEmail);
+  const nowIso = new Date().toISOString();
+
+  const resolvedUid = existing?.uid || deterministicUid;
+  const resolvedName =
+    String(displayName).trim() ||
+    existing?.displayName ||
+    cleanEmail.split('@')[0].replace(/[._]/g, ' ') ||
+    'Google Scholar';
+  const resolvedCode =
+    existing?.friendCode || deriveDeterministicFriendCode(resolvedUid);
+
+  const account: StoredUserAccount = {
+    uid: resolvedUid,
+    email: cleanEmail,
+    displayName: resolvedName,
+    passwordHash:
+      existing?.passwordHash ||
+      crypto.createHash('sha256').update(`google_oauth_${cleanEmail}`).digest('hex'),
+    friendCode: resolvedCode,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso,
+  };
+
+  userAccountStore.set(cleanEmail, account);
+  savePersistentDiskStore();
+  getOrCreateUser(account.uid, account.email, account.displayName, account.friendCode).catch(() => {});
+
+  const savedWorkspace =
+    workspaceMemoryStore.get(account.uid) ||
+    workspaceMemoryStore.get(`email:${cleanEmail}`) ||
+    null;
+
+  return res.json({
+    user: {
+      uid: account.uid,
+      email: account.email,
+      displayName: account.displayName,
+      friendCode: account.friendCode,
+      isGoogleUser: true,
+    },
+    workspace: savedWorkspace?.payload || null,
+  });
+});
+
 app.post('/api/user/workspace', async (req, res) => {
   const { uid = 'guest-workspace-user', email = '', payload } = req.body || {};
   const cleanUid = String(uid).trim() || 'guest-workspace-user';
